@@ -1,7 +1,6 @@
 # Graph Neural Network (GNN) per PDC Placement
 
 ## 🧩 1. Ambiente (PDCEnv)
-**Hai già questo!**
 
 - Gestisce il grafo, i vincoli, i reward
 - Fornisce uno stato e accetta azioni
@@ -31,7 +30,7 @@ Noi usiamo **Policy Gradient** (es. REINFORCE) per semplicità
 
 **L'idea è:**
 1. **Esplorare** → provare azioni → raccogliere reward
-2. **Aggiornare** la rete per massimizzare il reward futuro atteso
+2. **Aggiornare** la rete per massimizzare il reward futuro atteso -> Un gradiente è un vettore che indica la direzione e la quantità con cui modificare un peso di un modello per migliorare la performance (cioè per ridurre la loss, la funzione di errore). È la derivata della funzione di perdita (loss) rispetto a un peso, quindi "Quanto cambia l’errore (loss) se cambio leggermente questo peso?". Infatti, quando chiamo "loss.backward()" , ogni peso w del tuo modello ha associato un valore chiamato w.grad. Questo valore è il gradiente della loss. Se nel training un nodo viene scelto spesso ma porta a un reward negativo, allora i gradienti diranno: "Abbassa la probabilità associata a quel nodo", modificando i pesi in modo da produrre logits (uscite grezze del modello) diversi rispetto a quel peso. Quindi, in sintesi,quando chiami loss.backward(), vengono calcolati **i gradienti della loss rispetto a tutti i pesi del modello, cioè quei parametri interni che trasformano le feature e determinano le probabilità**
 
 ---
 
