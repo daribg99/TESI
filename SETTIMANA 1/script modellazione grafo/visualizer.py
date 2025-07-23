@@ -1,50 +1,72 @@
 import matplotlib.pyplot as plt
 import networkx as nx
+from matplotlib.patches import Patch
 
 def draw_graph(G, pdcs=None):
-    plt.figure()
     if pdcs is None:
         pdcs = set()
 
-    pmu_nodes = [n for n in G.nodes if G.degree[n] == 1 and n != "CC"]
+    plt.figure(figsize=(14, 10))
 
-   
+    # Posizioni dei nodi: layout gerarchico se disponibile
     try:
         pos = nx.nx_pydot.pydot_layout(G, prog="dot")
-    except:
-        print(" Errore con pydot. Uso spring_layout.")
+    except Exception:
+        print("⚠️ Errore con pydot. Uso spring_layout.")
         pos = nx.spring_layout(G, seed=42)
 
-    labels = nx.get_edge_attributes(G, "latency")
+    edge_labels = nx.get_edge_attributes(G, "latency")
     node_colors = []
     node_labels = {}
+    node_edgecolors = []
 
     for n in G.nodes:
+        role = G.nodes[n].get("role")
         label = n
 
-        # Colori
+        # Colore e descrizione in base al ruolo
         if n in pdcs:
-            node_colors.append("orange")
-            label += " (PDC)"
-        elif G.nodes[n].get("type") == "control":
-            node_colors.append("red")
+            color = "orange"
+            label += f"\n{G.nodes[n].get('processing', 0)}"
+            edge_color = "black"
+        elif role == "CC":
+            color = "red"
+            label += "\n(CC)"
+            edge_color = "black"
+        elif role == "PMU":
+            color = "lightgreen"
+            label += "\n(PMU)"
+            edge_color = "black"
         else:
-            node_colors.append("lightblue")
+            color = "lightblue"
+            edge_color = "gray"
 
-        # Etichette (PMU)
-        if n in pmu_nodes:
-            label += " (PMU)"
-
+        node_colors.append(color)
         node_labels[n] = label
+        node_edgecolors.append(edge_color)
 
-    nx.draw(G, pos, with_labels=True, labels=node_labels,
-            node_size=1000, node_color=node_colors, font_size=9)
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=labels)
-    plt.title("Grafo Gerarchico — Rosso: CC, Arancione: PDC, Azzurro: altri nodi", fontsize=10)
-    print(" PDC visualizzati in arancione:", pdcs)
-    print(" PMU etichettati (nodi foglia):", pmu_nodes)
+    # Disegna nodi
+    nx.draw_networkx_nodes(G, pos,
+                           node_color=node_colors,
+                           edgecolors=node_edgecolors,
+                           node_size=1100,
+                           linewidths=1.8)
+
+    # Disegna archi e etichette
+    nx.draw_networkx_edges(G, pos, width=1.2)
+    nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7, label_pos=0.5)
+
+    # Legenda
+    legend_elements = [
+        Patch(facecolor="red", edgecolor="black", label="CC"),
+        Patch(facecolor="lightgreen", edgecolor="black", label="PMU"),
+        Patch(facecolor="orange", edgecolor="black", label="PDC (selezionati)"),
+        Patch(facecolor="lightblue", edgecolor="gray", label="Altro nodo (candidato)")
+    ]
+    plt.legend(handles=legend_elements, loc="lower left", fontsize=9, frameon=True)
+
+    plt.title("Grafo con ruoli: CC (rosso), PMU (verde), PDC (arancione), altri (azzurro)", fontsize=12)
+    plt.axis("off")
+    plt.tight_layout()
     plt.show(block=False)
-
-    
-    
-    
