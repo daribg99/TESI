@@ -2,13 +2,12 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from matplotlib.patches import Patch
 
-def draw_graph(G, pdcs=None):
+def draw_graph(G, pdcs=None, paths=None, max_latency=None):
     if pdcs is None:
         pdcs = set()
 
     plt.figure(figsize=(14, 10))
 
-    # Posizioni dei nodi: layout gerarchico se disponibile
     try:
         pos = nx.nx_pydot.pydot_layout(G, prog="dot")
     except Exception:
@@ -24,7 +23,6 @@ def draw_graph(G, pdcs=None):
         role = G.nodes[n].get("role")
         label = n
 
-        # Colore e descrizione in base al ruolo
         if n in pdcs:
             color = "orange"
             label += f"\n{G.nodes[n].get('processing', 0)}"
@@ -45,17 +43,50 @@ def draw_graph(G, pdcs=None):
         node_labels[n] = label
         node_edgecolors.append(edge_color)
 
-    # Disegna nodi
     nx.draw_networkx_nodes(G, pos,
                            node_color=node_colors,
                            edgecolors=node_edgecolors,
                            node_size=1100,
                            linewidths=1.8)
 
-    # Disegna archi e etichette
-    nx.draw_networkx_edges(G, pos, width=1.2)
+    # Disegna tutti gli archi base in grigio
+    nx.draw_networkx_edges(G, pos, width=1.2, edge_color="lightgray")
     nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
     nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7, label_pos=0.5)
+
+    # Colori diversi per ogni path PMU → CC
+    if paths:
+        colors = [
+            "crimson", "darkgreen", "royalblue", "goldenrod",
+            "purple", "darkorange", "deeppink", "teal", "brown"
+        ]
+        color_map = {}
+
+        for i, (pmu, data) in enumerate(paths.items()):
+            path = data["path"]
+            delay = data["delay"]
+            color = colors[i % len(colors)]
+            color_map[pmu] = color
+            edges = list(zip(path, path[1:]))
+
+            nx.draw_networkx_edges(G, pos,
+                                   edgelist=edges,
+                                   width=2.8,
+                                   edge_color=color)
+
+        # Testo con le latenze
+        text = "Latenze PMU → CC:\n"
+        text += "Max latency: " + str(max_latency) + " ms\n"
+        for pmu, data in paths.items():
+            delay = data["delay"]            
+            text += f"{pmu} → CC: {delay:.2f} ms"
+            if max_latency is not None and delay > max_latency:
+                text += f" ⚠️\n"
+            else:
+                text += " ✔️\n"
+
+        plt.gcf().text(0.05, 0.85, text, fontsize=9, verticalalignment='top',
+                       bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'))
 
     # Legenda
     legend_elements = [
@@ -66,7 +97,7 @@ def draw_graph(G, pdcs=None):
     ]
     plt.legend(handles=legend_elements, loc="lower left", fontsize=9, frameon=True)
 
-    plt.title("Grafo con ruoli: CC (rosso), PMU (verde), PDC (arancione), altri (azzurro)", fontsize=12)
+    plt.title("Grafo con ruoli e path evidenziati", fontsize=12)
     plt.axis("off")
     plt.tight_layout()
     plt.show(block=False)
