@@ -25,6 +25,7 @@ def create_graph(seed=None):
     # PMU (nodi foglia di livello 3)
     for i in range(1, 4):
         G.add_node(f"PMU{i}",
+                   data_rate=100,
                    group="A",
                    level=3,
                    processing=1,
@@ -50,7 +51,7 @@ def create_graph(seed=None):
 
     for u, v in edges:
         latency = round(random.uniform(2, 9), 2)
-        bandwidth = random.choice([100, 200, 500, 1000])
+        bandwidth = random.choice([100, 200, 300])  # in kbps
         status = "up"
         link_type = random.choices(["fiber", "ethernet", "wireless"], weights=[0.4, 0.4, 0.2])[0]
 

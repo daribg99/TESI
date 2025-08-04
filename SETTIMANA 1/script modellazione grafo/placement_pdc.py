@@ -8,43 +8,64 @@ def place_pdcs_greedy(G, max_latency):
     pdcs = set()
     pmu_paths = {}
 
-    pmu_nodes = [n for n in G.nodes if G.nodes[n].get("role") == "PMU"]
+    bandwidth_usage = {}  # (u, v) → traffico totale corrente
+    edge_flow = {}        # (u, v) → flussi passanti (per logging/debug)
 
+    pmu_nodes = [n for n in G.nodes if G.nodes[n].get("role") == "PMU"]
     pmu_to_path = {}
 
     for pmu in pmu_nodes:
+        base_rate = G.nodes[pmu].get("data_rate", 0)
+
         try:
             paths = nx.shortest_simple_paths(G, source=pmu, target="CC", weight="latency")
             for path in paths:
-                # Check validità: tutti i nodi online e archi up
-                if all(G.nodes[n].get("status") == "online" for n in path) and \
-                   all(G[u][v].get("status") == "up" for u, v in zip(path, path[1:])):
+                if not all(G.nodes[n].get("status") == "online" for n in path):
+                    continue
+                if not all(G[u][v].get("status") == "up" for u, v in zip(path, path[1:])):
+                    continue
+
+                # Verifica se tutti gli archi lungo il path hanno banda sufficiente
+                path_ok = True
+                for u, v in zip(path, path[1:]):
+                    edge = (u, v) if (u, v) in G.edges else (v, u)
+                    capacity = G.edges[edge].get("bandwidth", float("inf"))
+                    usage = bandwidth_usage.get(edge, 0)
+                    if usage + base_rate > capacity:
+                        path_ok = False
+                        break
+
+                if path_ok:
+                    # Accetta il path, aggiorna uso di banda lungo il path
                     pmu_to_path[pmu] = path
-                    break
+                    for u, v in zip(path, path[1:]):
+                        edge = (u, v) if (u, v) in G.edges else (v, u)
+                        bandwidth_usage[edge] = bandwidth_usage.get(edge, 0) + base_rate
+                        edge_flow.setdefault(edge, []).append(pmu)
+                        print(f"✅ Arco {u}–{v} +{base_rate} kbps (da {pmu}) → totale: {bandwidth_usage[edge]} / {G.edges[edge]['bandwidth']} kbps")
+                    break  # trovato un path valido, esci dal loop
             else:
-                print(f"Nessun path valido trovato da {pmu} a CC.")
+                print(f"⚠️ Nessun path valido da {pmu} a CC (stato o banda).")
         except nx.NetworkXNoPath:
-            print(f"Nessun path esistente da {pmu} a CC.")
+            print(f"⚠️ Nessun path esistente da {pmu} a CC.")
             continue
 
-    for path in pmu_to_path.values(): # trova i PDC
-        for node in path[1:-1]:  # Escludi PMU e CC
+    # Ricava i nodi PDC dai path (escludi PMU e CC)
+    for path in pmu_to_path.values():
+        for node in path[1:-1]:
             if G.nodes[node].get("role") not in {"PMU", "CC"}:
                 pdcs.add(node)
 
-    # Calcola i ritardi
+    # Calcola la latenza totale di ciascun path
     for pmu, path in pmu_to_path.items():
         total_delay = 0.0
-
-        for i in range(len(path) - 1):
-            u, v = path[i], path[i + 1]
+        for u, v in zip(path, path[1:]):
             total_delay += G[u][v]["latency"]
-
         for node in path:
             if node in pdcs:
                 total_delay += G.nodes[node].get("processing", 0)
-
         pmu_paths[pmu] = {"path": path, "delay": total_delay}
+
     if not pmu_paths:
         print("⚠️ Nessun path valido per alcun PMU.")
         return pdcs
@@ -53,19 +74,18 @@ def place_pdcs_greedy(G, max_latency):
     max_delay = max_pmu[1]["delay"]
     max_path = max_pmu[1]["path"]
 
-    print("\n Path PMU → CC e relative latenze:")
+    print("\n📡 Path PMU → CC e relative latenze:")
     for pmu, data in pmu_paths.items():
         print(f"  {pmu} → CC: {data['path']} | Ritardo totale = {data['delay']:.2f} ms")
 
     print()
     if max_delay > max_latency:
-        print(f" Ritardo massimo {max_delay:.2f} ms supera la soglia {max_latency} ms.")
-        print(f" Causato dal path: {max_pmu[0]} → CC = {max_path}")
+        print(f"⚠️ Ritardo massimo {max_delay:.2f} ms supera la soglia {max_latency} ms.")
+        print(f"   Causato dal path: {max_pmu[0]} → CC = {max_path}")
     else:
-        print(f" Ritardo massimo {max_delay:.2f} ms sotto la soglia {max_latency} ms.")
+        print(f"✅ Ritardo massimo {max_delay:.2f} ms sotto la soglia {max_latency} ms.")
 
     return (pdcs, pmu_paths, max_latency)
-
 
 def place_pdcs_random(G, max_latency, seed=None):
     if seed is not None:
@@ -73,9 +93,11 @@ def place_pdcs_random(G, max_latency, seed=None):
 
     pdcs = set()
     pmu_paths = {}
+    bandwidth_usage = {}  # (u, v) → traffico cumulativo
+
     pmu_nodes = [n for n in G.nodes if G.nodes[n].get("role") == "PMU"]
 
-    def dfs_random_path(current, target, visited):
+    def dfs_random_path(current, target, visited, data_rate):
         if current == target:
             return [current]
 
@@ -84,24 +106,39 @@ def place_pdcs_random(G, max_latency, seed=None):
         random.shuffle(neighbors)
 
         for neighbor in neighbors:
-            if neighbor not in visited and G.nodes[neighbor].get("role") != "PMU":
-                if G.nodes[neighbor].get("status") != "online":
-                    continue
-                if G[current][neighbor].get("status") != "up":
-                    continue
+            if neighbor in visited:
+                continue
+            if G.nodes[neighbor].get("role") == "PMU":
+                continue
+            if G.nodes[neighbor].get("status") != "online":
+                continue
+            if G[current][neighbor].get("status") != "up":
+                continue
 
-                path = dfs_random_path(neighbor, target, visited)
-                if path:
-                    return [current] + path
+            edge = (current, neighbor) if (current, neighbor) in G.edges else (neighbor, current)
+            capacity = G.edges[edge].get("bandwidth", float("inf"))
+            usage = bandwidth_usage.get(edge, 0)
+            if usage + data_rate > capacity:
+                print(f"⚠️ Arco {current}–{neighbor} saturato: {usage + data_rate} kbps > {capacity} kbps")
+                continue
+
+            print(f"✅ Arco {current}–{neighbor} OK: {usage + data_rate} ≤ {capacity} kbps")
+            path = dfs_random_path(neighbor, target, visited, data_rate)
+            if path:
+                return [current] + path
 
         visited.remove(current)
         return None
 
     for pmu in pmu_nodes:
-        path = dfs_random_path(pmu, "CC", set())
+        data_rate = G.nodes[pmu].get("data_rate", 0)
+
+        path = dfs_random_path(pmu, "CC", set(), data_rate)
         if path is None:
-            print(f" Nessun cammino valido trovato da {pmu} a CC (senza PMU/offline/down).")
+            print(f"⚠️ Nessun cammino valido per {pmu} → CC (nodi down o banda saturata).")
             continue
+
+        # Calcola ritardo
         total_delay = 0.0
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
@@ -109,65 +146,66 @@ def place_pdcs_random(G, max_latency, seed=None):
             if G.nodes[u].get("role") == "candidate":
                 total_delay += G.nodes[u].get("processing", 0)
 
+            # Aggiorna uso della banda con data_rate della PMU sorgente
+            edge = (u, v) if (u, v) in G.edges else (v, u)
+            bandwidth_usage[edge] = bandwidth_usage.get(edge, 0) + data_rate
+            print(f"📶 Arco {u}–{v} aggiornato: {bandwidth_usage[edge]} / {G.edges[edge]['bandwidth']} kbps")
+
         pmu_paths[pmu] = {"path": path, "delay": total_delay}
         for node in path[1:-1]:
-            pdcs.add(node)
+            if G.nodes[node].get("role") not in {"PMU", "CC"}:
+                pdcs.add(node)
 
-    # Trova il path con ritardo massimo
+    # Trova ritardo massimo
     if pmu_paths:
         max_pmu = max(pmu_paths.items(), key=lambda x: x[1]["delay"])
         max_delay = max_pmu[1]["delay"]
         max_path = max_pmu[1]["path"]
 
-        print("\n Cammini PMU → CC e ritardi:")
+        print("\n🎲 Cammini PMU → CC e ritardi:")
         for pmu, data in pmu_paths.items():
             print(f"  {pmu} → CC: {data['path']} | Ritardo = {data['delay']:.2f} ms")
 
         print()
         if max_delay > max_latency:
-            print(f" Ritardo massimo {max_delay:.2f} ms supera la soglia {max_latency} ms.")
+            print(f"⚠️ Ritardo massimo {max_delay:.2f} ms supera la soglia {max_latency} ms.")
             print(f"   Causato dal path: {max_pmu[0]} → CC = {max_path}")
         else:
-            print(f" Ritardo massimo {max_delay:.2f} ms sotto la soglia {max_latency} ms.")
+            print(f"✅ Ritardo massimo {max_delay:.2f} ms sotto la soglia {max_latency} ms.")
     else:
-        print(" Nessun path valido trovato da alcun PMU al CC.")
+        print("❌ Nessun path valido trovato da alcun PMU al CC.")
 
     return (pdcs, pmu_paths, max_latency)
+
+
+
+from itertools import combinations
 
 def place_pdcs_bruteforce(G, max_latency):
     
     def is_valid_chain(path, pdc_nodes, G):
         if not path:
             return False
-
         node_role = [G.nodes[n].get("role") for n in path]
         if node_role[0] != "PMU" or node_role[-1] != "CC":
             return False
-
-        # Tutti i nodi intermedi devono essere PDC validi
         for i in range(1, len(path) - 1):
             if path[i] not in pdc_nodes:
                 return False
             if not G.nodes[path[i]].get("online", True):
                 return False
-
-        # Verifica adiacenza PDC consecutivi
         for u, v in zip(path, path[1:]):
             if not G.has_edge(u, v) or G[u][v].get("status", "up") != "up":
                 return False
-
         return True
 
     def compute_path_latency(path, G, pdc_nodes):
-        """Calcola la latenza totale del path: somma archi + processing nodi PDC"""
         latency = 0
         for u, v in zip(path, path[1:]):
             latency += G[u][v].get("latency", 0)
-
         for n in path:
             if n in pdc_nodes:
                 latency += G.nodes[n].get("processing", 0)
-
         return latency
 
     pmu_nodes = [n for n, d in G.nodes(data=True) if d.get("role") == "PMU"]
@@ -176,25 +214,27 @@ def place_pdcs_bruteforce(G, max_latency):
 
     best_config = None
     best_total_latency = float('inf')
-    best_paths={}
+    best_paths = {}
+    best_bandwidth_usage = {}
 
     for k in range(1, len(candidate_nodes) + 1):
-        for pdc_nodes in combinations(candidate_nodes, k): # combinations ritorna tutte le combinazioni di k PDC
+        for pdc_nodes in combinations(candidate_nodes, k):
             all_covered = True
             total_latency = 0
-            current_path={}
+            current_path = {}
+            bandwidth_usage = {}
+
             for pmu in pmu_nodes:
-                
+                data_rate = G.nodes[pmu].get("data_rate", 0)
+
                 allowed_nodes = set(pdc_nodes) | {pmu, cc_node}
                 subgraph = nx.Graph()
                 for u in allowed_nodes:
                     subgraph.add_node(u, **G.nodes[u])
-
                 for u, v in G.edges():
                     if u in allowed_nodes and v in allowed_nodes:
                         if G[u][v].get("status", "up") == "up":
                             subgraph.add_edge(u, v, **G[u][v])
-
 
                 try:
                     path = nx.shortest_path(subgraph, source=pmu, target=cc_node, weight="latency")
@@ -206,23 +246,52 @@ def place_pdcs_bruteforce(G, max_latency):
                     all_covered = False
                     break
 
+                # Verifica saturazione banda su tutto il path
+                path_valid = True
+                for u, v in zip(path, path[1:]):
+                    edge = (u, v) if (u, v) in G.edges else (v, u)
+                    capacity = G.edges[edge].get("bandwidth", float("inf"))
+                    usage = bandwidth_usage.get(edge, 0)
+                    if usage + data_rate > capacity:
+                        path_valid = False
+                        break
+
+                if not path_valid:
+                    all_covered = False
+                    break
+
+                # Aggiorna la banda (solo dopo validazione)
+                for u, v in zip(path, path[1:]):
+                    edge = (u, v) if (u, v) in G.edges else (v, u)
+                    bandwidth_usage[edge] = bandwidth_usage.get(edge, 0) + data_rate
+
                 latency = compute_path_latency(path, G, pdc_nodes)
                 total_latency += latency
                 current_path[pmu] = {"path": path, "delay": latency}
-
 
             if all_covered and total_latency < best_total_latency:
                 best_config = list(pdc_nodes)
                 best_total_latency = total_latency
                 best_paths = current_path
-    
-    print("\n📍 Migliori path PMU → CC con configurazione PDC ottima:")
-    for pmu, data in best_paths.items():
-        path = data["path"]
-        delay = data["delay"]
-        print(f"{pmu} → CC: {' → '.join(path)}, Ritardo = {delay:.2f} ms")
+                best_bandwidth_usage = bandwidth_usage.copy()
 
-    return best_config, best_paths, max_latency if best_config else []
+    if best_config:
+        print("\n📍 Migliori path PMU → CC con configurazione PDC ottima:")
+        for pmu, data in best_paths.items():
+            path = data["path"]
+            delay = data["delay"]
+            print(f"{pmu} → CC: {' → '.join(path)}, Ritardo = {delay:.2f} ms")
+            print(f"Banda usata per ogni arco:")
+            for u, v in zip(path, path[1:]):
+                edge = (u, v) if (u, v) in G.edges else (v, u)
+                usage = best_bandwidth_usage.get(edge) or best_bandwidth_usage.get((edge[1], edge[0]), 0)
+                print(f"  {u}–{v}: {usage} kbps")
+    else:
+        print("❌ Nessuna configurazione valida trovata.")
+
+    return best_config if best_config else [], best_paths, max_latency
+
+
 
 def q_learning_placement(G, max_latency, episodes=15000, alpha=0.1, gamma=0.9, epsilon=0.8, seed=None, verbose=False):
     
