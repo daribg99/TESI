@@ -51,7 +51,7 @@ def create_graph(seed=None):
 
     for u, v in edges:
         latency = round(random.uniform(2, 9), 2)
-        bandwidth = random.choice([100, 200, 300])  # in kbps
+        bandwidth = random.choice([100])  # in kbps
         status = "up"
         link_type = random.choices(["fiber", "ethernet", "wireless"], weights=[0.4, 0.4, 0.2])[0]
 

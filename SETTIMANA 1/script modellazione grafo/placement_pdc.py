@@ -293,7 +293,7 @@ def place_pdcs_bruteforce(G, max_latency):
 
 
 
-def q_learning_placement(G, max_latency, episodes=15000, alpha=0.1, gamma=0.9, epsilon=0.8, seed=None, verbose=False):
+def q_learning_placement(G, max_latency, episodes=25000, alpha=0.1, gamma=0.9, epsilon=0.8, seed=None, verbose=False):
     
     if seed is not None:
         random.seed(seed)
@@ -328,33 +328,40 @@ def q_learning_placement(G, max_latency, episodes=15000, alpha=0.1, gamma=0.9, e
     #         return False
     #     return True
     
-    def valid_path(path, state):
-        # Verifica che i nodi intermedi siano PDC attivi
+    def valid_path(path, state, bandwidth_usage, data_rate):
+        # Verifica nodi intermedi PDC attivi
         for node in path[1:-1]:
             if node not in nodes_pdc:
                 return False
             idx = nodes_pdc.index(node)
             if state[idx] != 1:
                 return False
-        # Verifica che tutti gli archi siano up
+        # Verifica stato archi e nodi + saturazione banda
         for u, v in zip(path, path[1:]):
             if G[u][v].get("status") != "up":
                 return False
-        # Verifica che tutti i nodi siano online
+            edge = (u, v) if (u, v) in G.edges else (v, u)
+            capacity = G.edges[edge].get("bandwidth", float("inf"))
+            usage = bandwidth_usage.get(edge, 0)
+            if usage + data_rate > capacity:
+                return False
         if any(G.nodes[n].get("status") != "online" for n in path):
             return False
         return True
 
+
     
     def find_best_paths(state):
-        pmu_to_best = {} # dizionario nella forma {PMU: (path, delay)}
+        pmu_to_best = {}
+        bandwidth_usage = {}
         for pmu in pmu_nodes:
+            data_rate = G.nodes[pmu].get("data_rate", 0)
             best_path = None
             best_delay = float("inf")
             try:
-                paths = islice(nx.all_simple_paths(G, pmu, "CC", cutoff=10), 150) # trova fino a 100 cammini, cutoff a 10 nodi per evitare cicli infiniti
+                paths = islice(nx.all_simple_paths(G, pmu, "CC", cutoff=15), 500)
                 for path in paths:
-                    if not valid_path(path, state):
+                    if not valid_path(path, state, bandwidth_usage, data_rate):
                         continue
                     delay = compute_total_delay(path)
                     if delay < best_delay:
@@ -364,7 +371,11 @@ def q_learning_placement(G, max_latency, episodes=15000, alpha=0.1, gamma=0.9, e
                 continue
             if best_path:
                 pmu_to_best[pmu] = {"path": best_path, "delay": best_delay}
+                for u, v in zip(best_path, best_path[1:]):
+                    edge = (u, v) if (u, v) in G.edges else (v, u)
+                    bandwidth_usage[edge] = bandwidth_usage.get(edge, 0) + data_rate
         return pmu_to_best
+
 
     def state_to_index(state):
         return int("".join(str(b) for b in state), 2)
