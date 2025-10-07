@@ -57,7 +57,39 @@ kubectl apply -n <namespace> -f openpdc.yaml
 2) Make sure the nodePort values in your OpenPDC services are unique if deploying multiple instances.
 
 
+### To retrive queries from PerconaDB:
+1) Take db password from secret:
+```
+kubectl get secrets cluster1-secrets -n <namespace-name> -o yaml -o jsonpath='{.data.root}' | base64 --decode | tr '\n' ' ' && echo " "
+```
+2) Enter the specific pod:
+```
+kubectl exec -it cluster1-pxc-0 -c pxc -n <namespace> -- bash
+```
+3) On general_log to save queries
+```
+mysql -uroot -p"$PW" -e "SET GLOBAL log_output='TABLE'; SET GLOBAL general_log=ON; TRUNCATE TABLE mysql.general_log;"
+```
+4) Your operation...
+5) Stamp your query ( converting UTC, fiter HAProxy and Percona Operator )
+```
+mysql -uroot -p"$PW" -e "
+  SELECT
+    CONVERT_TZ(event_time,'+00:00','Europe/Rome') AS event_time_rome,
+    user_host,
+    CONVERT(argument USING utf8) AS query
+  FROM mysql.general_log
+  WHERE command_type='Query'
+    AND user_host NOT LIKE 'monitor%'
+AND user_host NOT LIKE 'operator%'
+  ORDER BY event_time;"
+  ```
+6) Clear table
+```
+mysql -uroot -p"$PW" -e "TRUNCATE TABLE mysql.general_log;"
+```
 
-
-
-
+7) Turn off general_log
+```
+mysql -uroot -p"$PW" -e "SET GLOBAL general_log=OFF;"
+```
