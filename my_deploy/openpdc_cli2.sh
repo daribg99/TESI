@@ -47,8 +47,8 @@ Addpmu options:
   --lat VAL              (default: 37.5)
 
 Examples:
-  $0 addpmu --ns demo --acronym PMU-3 --name "Pmu-3" --server pmu-3
-  $0 addoutputstream   --ns lower   --acronym LOWER   --name low2high   --pmus "PMU-2,PMU-3"   --port 4712 --fps 30 --nomfreq 60
+  $0 addpmu --name "Pmu-3" --ns lower --db lower
+  $0 addoutputstream --ns lower --db lower --acronym LOWER --name low2high --pmus "PMU-3"
   $0 createhistorian --db higher --ns higher
 USAGE
 }
@@ -66,11 +66,8 @@ addpmu_cmd() {
     POD="${CLUSTER_PREFIX}-pxc-0"
     SVC="${CLUSTER_PREFIX}-haproxy"
     SECRET="${CLUSTER_PREFIX}-secrets"
-    FPS=25
-    PORT=4712
-    NAME=""
-    ACRONYM=""
-    SERVER=""
+    
+    local FPS=25 PORT=4712 NAME="" ACRONYM="" SERVER=""
 
     [[ -z "$PXC_POD" ]] && PXC_POD="${CLUSTER_PREFIX}-pxc-0"
     [[ -z "$HAPROXY_SVC" ]] && HAPROXY_SVC="${CLUSTER_PREFIX}-haproxy"
@@ -81,7 +78,7 @@ addpmu_cmd() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)
-      addpmu_usage
+      usage_global
       return 0
       ;;
       --ns) NS="$2"; shift 2;;
@@ -218,6 +215,174 @@ printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
 
 echo "PMU '$NAME' ($ACRONYM) successfully added on db $DB_NAME."
 }
+
+
+addoutputstream_cmd() {
+  # defaults
+    POD="${CLUSTER_PREFIX}-pxc-0"
+    SVC="${CLUSTER_PREFIX}-haproxy"
+    SECRET="${CLUSTER_PREFIX}-secrets"
+    FPS=30
+    PORT=4712
+    NAME=""
+    ACRONYM=""
+    SERVER=""
+
+    [[ -z "$PXC_POD" ]] && PXC_POD="${CLUSTER_PREFIX}-pxc-0"
+    [[ -z "$HAPROXY_SVC" ]] && HAPROXY_SVC="${CLUSTER_PREFIX}-haproxy"
+    [[ -z "$ROOT_SECRET_NAME" ]] && ROOT_SECRET_NAME="${CLUSTER_PREFIX}-secrets"
+    
+    local PMUS=""  NOMFREQ=60 LAG=3 LEAD=1 USERTAG="polito" 
+
+  # parse args
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+      addoutputstream_usage
+      return 0
+      ;;
+      --ns) NS="$2"; shift 2;;
+      --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
+      --db) DB_NAME="$2"; shift 2;;
+      --pxc-pod) POD="$2"; shift 2;;
+      --haproxy-svc) SVC="$2"; shift 2;;
+      --secret-name) ROOT_SECRET_NAME="$2"; shift 2;;
+      --acronym) ACRONYM="$2"; shift 2;;
+      --name) NAME="$2"; shift 2;;
+      --pmus) PMUS="$2"; shift 2;;
+      --port) PORT="$2"; shift 2;;
+      --fps) FPS="$2"; shift 2;;
+      --nomfreq) NOMFREQ="$2"; shift 2;;
+      --lag) LAG="$2"; shift 2;;
+      --lead) LEAD="$2"; shift 2;;
+      --user) USERTAG="$2"; shift 2;;
+      *) echo "Argument unknown: $1"; return 1;;
+    esac
+  done
+
+  #if not ns, db, pmus, name or acronym, exit
+  if [[ -z "$NS" ]]; then
+    echo "Error: --ns <namespace> is mandatory."
+    return 1
+  fi
+  if [[ -z "$DB_NAME" ]]; then
+    echo "Error: --db <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$PMUS" ]]; then
+    echo "Error: --pmus <list> is mandatory."
+    return 1
+  fi
+  if [[ -z "$NAME" ]]; then
+    echo "Error: --name <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$ACRONYM" ]]; then
+    echo "Error: --acronym <acronym> is mandatory."
+    return 1
+  fi
+
+  echo "Namespace: $NS"
+  echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
+  echo "OutputStream: $NAME ($ACRONYM)  PMUs: $PMUS  FPS: $FPS  Port: $PORT"
+
+  # root pwd da secret
+  ROOTPWD="$(kubectl get secrets "$SECRET" -n "$NS" -o jsonpath='{.data.root}' | base64 --decode)"
+
+  # prepara SQL base per OutputStream
+  SQL=$(cat <<EOF
+USE \`${DB_NAME}\`;
+SET @NodeID := (SELECT ID FROM Node LIMIT 1);
+
+INSERT INTO OutputStream (
+  NodeID, Acronym, Name, Type, ConnectionString, IDCode, CommandChannel, DataChannel,
+  AutoPublishConfigFrame, AutoStartDataChannel, NominalFrequency, FramesPerSecond,
+  LagTime, LeadTime, UseLocalClockAsRealTime, AllowSortsByArrival, LoadOrder, Enabled,
+  IgnoreBadTimeStamps, TimeResolution, AllowPreemptivePublishing, DownSamplingMethod,
+  DataFormat, CoordinateFormat, CurrentScalingValue, VoltageScalingValue, AnalogScalingValue,
+  DigitalMaskValue, PerformTimeReasonabilityCheck, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn
+) VALUES (
+  @NodeID, '${ACRONYM}', '${NAME}', 0, NULL, 0,
+  CONCAT('port=${PORT};'), NULL,
+  0, 1, ${NOMFREQ}, ${FPS},
+  ${LAG}, ${LEAD}, 1, 0, 1, 1,
+  0, 330000, 1, 'LastReceived', 'FloatingPoint', 'Polar',
+  2423, 2725785, 1373291, -65536, 1,
+  '${USERTAG}', NOW(6), '${USERTAG}', NOW(6)
+);
+
+SET @AdapterID := LAST_INSERT_ID();
+EOF
+  )
+  # for each PMU, add Device, Phasors, Analogs, Measurements
+  IFS=',' read -ra PMU_ARR <<< "$PMUS"
+  idcode=1
+  for raw in "${PMU_ARR[@]}"; do
+    pmu="$(echo "$raw" | xargs)"         # trim
+    [[ -z "$pmu" ]] && continue
+    pmu_name="$(echo "$pmu" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
+
+    BLOCK=$(cat <<EOF
+-- ======================================================
+-- PMU ${pmu}
+-- Device dello stream
+INSERT INTO OutputStreamDevice (
+  NodeID, AdapterID, IDCode, Acronym, BpaAcronym, Name,
+  PhasorDataFormat, FrequencyDataFormat, AnalogDataFormat, CoordinateFormat,
+  LoadOrder, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn
+) VALUES (
+  @NodeID, @AdapterID, ${idcode}, '${pmu}', '', '${pmu_name}',
+  NULL, NULL, NULL, NULL,
+  0, 1, '${USERTAG}', NOW(6), '${USERTAG}', NOW(6)
+);
+SET @OSDevID := LAST_INSERT_ID();
+
+-- Phasor A/B/C (tensioni)
+INSERT INTO OutputStreamDevicePhasor
+  (NodeID, OutputStreamDeviceID, Label, Type, Phase, ScalingValue, LoadOrder, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES
+  (@NodeID, @OSDevID, 'A', 'V', '+', 0, 1, '${USERTAG}', NOW(6), '${USERTAG}', NOW(6)),
+  (@NodeID, @OSDevID, 'B', 'V', '+', 0, 2, '${USERTAG}', NOW(6), '${USERTAG}', NOW(6)),
+  (@NodeID, @OSDevID, 'C', 'V', '+', 0, 3, '${USERTAG}', NOW(6), '${USERTAG}', NOW(6));
+
+
+INSERT INTO OutputStreamDeviceAnalog
+  (NodeID, OutputStreamDeviceID, Label, Type, ScalingValue, LoadOrder, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES
+  (@NodeID, @OSDevID, 'D', 0, 0, 1, '${USERTAG}', NOW(6), '${USERTAG}', NOW(6));
+
+INSERT INTO OutputStreamMeasurement
+  (NodeID, AdapterID, HistorianID, PointID, SignalReference, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+SELECT
+  @NodeID, @AdapterID, 1, m.PointID, m.SignalReference, '${USERTAG}', NOW(6), '${USERTAG}', NOW(6)
+FROM Measurement m
+JOIN Device d ON d.ID = m.DeviceID
+WHERE d.Acronym='${pmu}'
+  AND m.SignalReference IN (
+    '${pmu}-AV1','${pmu}-FQ','${pmu}-DF','${pmu}-SF',
+    '${pmu}-PM1','${pmu}-PA1',
+    '${pmu}-PM2','${pmu}-PA2',
+    '${pmu}-PM3','${pmu}-PA3'
+  );
+EOF
+)
+SQL+="$BLOCK"
+    idcode=$((idcode+1))
+  done
+
+
+  # esegui
+   printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
+   mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
+
+   # Stampa SQL per debug
+    #echo "---------- BEGIN SQL ----------"
+    #printf "%s\n" "$SQL"
+    #echo "----------- END SQL -----------"
+
+  ok "OutputStream '${NAME}' (${ACRONYM}) successfully created with PMUs: ${PMUS}"
+}
+
 
 case "$SUBCOMMAND" in
   help) usage_global;;
