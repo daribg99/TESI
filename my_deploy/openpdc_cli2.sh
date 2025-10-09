@@ -17,11 +17,11 @@ ok()   { echo "[OK] $*"; }
 usage_global() {
   cat <<USAGE
 Usage:
-  $0 <command> <subcommand> [global options] [command options]
+  $0 <subcommand> [global options] [command options]
 
 Subcommands:
   addpmu            Add a PMU (Device + Measurements)
-  addoutputstream   Create an output stream
+  createoutputstream   Create an output stream
   createhistorian   Create a local historian
   help              Show this help
 
@@ -34,7 +34,7 @@ Global options:
   --secret-name NAME                 (default: <cluster>-secrets)
   --mysql-user USER                  (default: root)
 
-Addpmu options:
+addpmu options:
   --name NAME            (es. "Pmu-3") mandatory
   --acronym ACR          (es. PMU-3)  
   --server HOST          (endpoint PMU) 
@@ -46,16 +46,34 @@ Addpmu options:
   --lon VAL              (default: -98.6)
   --lat VAL              (default: 37.5)
 
+addoutputstream options:
+  --acronym ACR              (es. LOWER)                 mandatory
+  --name NAME                (es. "low2high")            mandatory
+  --pmus "PMU-1,PMU-2,..."   elenco PMU da collegare     mandatory
+  --port N                   CommandChannel port (4712 default)
+  --fps N                    FramesPerSecond (30 default)
+  --nomfreq N                NominalFrequency (60 default)
+  --lag MS                   LagTime in ms (3 default)
+  --lead MS                  LeadTime in ms (1 default)
+  --user TAG                 UpdatedBy/CreatedBy (polito default)
+
+createhistorian options:
+  --name NAME                (default: localhistorian)
+  --acronym ACR              (default: LOCAL)
+  --connstr STR              ConnectionString (default: NULL)
+  --mri N                    MeasurementReportingInterval (default: 100000)
+  --user TAG                 UpdatedBy/CreatedBy (default: polito)
+
 Examples:
   $0 addpmu --name "Pmu-3" --ns lower --db lower
-  $0 addoutputstream --ns lower --db lower --acronym LOWER --name low2high --pmus "PMU-3"
+  $0 createoutputstream --ns lower --db lower --acronym LOWER --name low2high --pmus "PMU-3"
   $0 createhistorian --db higher --ns higher
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    addpmu|addoutputstream|createhistorian|help) SUBCOMMAND="$1"; shift; break;;
+    addpmu|createoutputstream|createhistorian|help) SUBCOMMAND="$1"; shift; break;;
     -h|--help) usage_global; exit 0;;
     *) echo "Unknown command: $1"; usage_global; exit 1;;
     esac
@@ -213,15 +231,12 @@ EOF
 printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
   mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
-echo "PMU '$NAME' ($ACRONYM) successfully added on db $DB_NAME."
+echo "[OK] PMU '$NAME' ($ACRONYM) successfully added on db $DB_NAME."
 }
 
 
-addoutputstream_cmd() {
+createoutputstream_cmd() {
   # defaults
-    POD="${CLUSTER_PREFIX}-pxc-0"
-    SVC="${CLUSTER_PREFIX}-haproxy"
-    SECRET="${CLUSTER_PREFIX}-secrets"
     FPS=30
     PORT=4712
     NAME=""
@@ -238,7 +253,7 @@ addoutputstream_cmd() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)
-      addoutputstream_usage
+      createoutputstream_usage
       return 0
       ;;
       --ns) NS="$2"; shift 2;;
@@ -259,6 +274,10 @@ addoutputstream_cmd() {
       *) echo "Argument unknown: $1"; return 1;;
     esac
   done
+
+  POD="${CLUSTER_PREFIX}-pxc-0"
+  SVC="${CLUSTER_PREFIX}-haproxy"
+  SECRET="${CLUSTER_PREFIX}-secrets"
 
   #if not ns, db, pmus, name or acronym, exit
   if [[ -z "$NS" ]]; then
@@ -380,14 +399,112 @@ SQL+="$BLOCK"
     #printf "%s\n" "$SQL"
     #echo "----------- END SQL -----------"
 
-  ok "OutputStream '${NAME}' (${ACRONYM}) successfully created with PMUs: ${PMUS}"
+  echo  "[OK] OutputStream '${NAME}' (${ACRONYM}) successfully created with PMUs: ${PMUS}"
 }
 
+createhistorian_cmd() {
+  
+  local USERTAG="polito"
+  local NAME="localhistorian"
+  local ACRONYM="LOCAL"
+  local CONNSTR=""    
+  local MRI=100000    
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_global; return 0;;
+      --ns) NS="$2"; shift 2;;
+      --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
+      --db) DB_NAME="$2"; shift 2;;
+      --pxc-pod) POD="$2"; shift 2;;
+      --haproxy-svc) SVC="$2"; shift 2;;
+      --secret-name) ROOT_SECRET_NAME="$2"; shift 2;;
+      --name) NAME="$2"; shift 2;;
+      --acronym) ACRONYM="$2"; shift 2;;
+      --connstr) CONNSTR="$2"; shift 2;;
+      --mri) MRI="$2"; shift 2;;
+      *) echo "Argument unknown: $1"; return 1;;
+    esac
+  done
+
+  #if no ns or db, exit
+  if [[ -z "$NS" ]]; then
+    echo "Error: --ns <namespace> is mandatory."
+    return 1 
+  fi
+  if [[ -z "$DB_NAME" ]]; then
+    echo "Error: --db <name> is mandatory."
+    return 1
+  fi
+
+  # global
+  POD="${CLUSTER_PREFIX}-pxc-0"
+  SVC="${CLUSTER_PREFIX}-haproxy"
+  SECRET="${CLUSTER_PREFIX}-secrets"
+
+  echo "Namespace: $NS"
+  echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
+  echo "Historian: $NAME ($ACRONYM)"
+ # --- root pwd dal secret ---
+  local ROOTPWD
+  ROOTPWD="$(kubectl get secrets "$SECRET" -n "$NS" -o jsonpath='{.data.root}' | base64 --decode)"
+
+  # --- costruzione SQL ---
+  # Se CONNSTR è vuoto, usa NULL; altrimenti quota la stringa
+  local CONN_SQL="NULL"
+  if [[ -n "$CONNSTR" ]]; then
+    # escape apici singoli
+    local ESCONN
+    ESCONN="$(printf "%s" "$CONNSTR" | sed "s/'/''/g")"
+    CONN_SQL="'${ESCONN}'"
+  fi
+
+  SQL=$(cat <<EOF
+USE \`${DB_NAME}\`;
+
+
+SET @NodeID := (SELECT ID FROM Node LIMIT 1);
+
+
+INSERT INTO Historian (
+  NodeID, Acronym, Name, AssemblyName, TypeName, ConnectionString,
+  IsLocal, MeasurementReportingInterval, Description, LoadOrder, Enabled,
+  UpdatedBy, UpdatedOn, CreatedBy, CreatedOn
+) VALUES (
+  @NodeID,
+  '${ACRONYM}',
+  '${NAME}',
+  'HistorianAdapters.dll',
+  'HistorianAdapters.LocalOutputAdapter',
+  ${CONN_SQL},
+  1,
+  ${MRI},
+  NULL,
+  0,
+  1,
+  '${USERTAG}', NOW(6), '${USERTAG}', NOW(6)
+);
+
+EOF
+)
+
+  
+    #echo "---------- BEGIN SQL ----------"
+    #printf "%s\n" "$SQL"
+    #echo "----------- END SQL -----------"
+  
+
+  printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
+    mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
+
+  echo "[OK] Historian '${NAME}' (${ACRONYM}) successfully created."
+
+}
 
 case "$SUBCOMMAND" in
   help) usage_global;;
   addpmu) addpmu_cmd "$@";;
-  addoutputstream) addoutputstream_cmd "${GLOBAL_ARGS[@]}" "$@";;
+  createoutputstream) createoutputstream_cmd "${GLOBAL_ARGS[@]}" "$@";;
   createhistorian) createhistorian_cmd "${GLOBAL_ARGS[@]}" "$@";;
   *) usage_global; exit 1;;
 esac
