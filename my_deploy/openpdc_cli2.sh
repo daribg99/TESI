@@ -65,8 +65,10 @@ createhistorian options:
   --user TAG                 UpdatedBy/CreatedBy (default: polito)
 
 connectiontopdc options:
-  --name NAME                mandatory
-  --acronym ACR              mandatory
+  --name NAME                 mandatory
+  --acronym ACR               mandatory
+  --server                    mandatory
+  --pmus                      mandatory
 
 Examples:
   $0 addpmu --name "Pmu-3" --ns lower --db lower
@@ -517,6 +519,8 @@ connectiontopdc_cmd(){
       --secret-name) ROOT_SECRET_NAME="$2"; shift 2;;
       --name) NAME="$2"; shift 2;;
       --acronym) ACRONYM="$2"; shift 2;;
+      --server) SERVER="$2"; shift 2;;
+      --pmus) PMUS="$2"; shift 2;;
       *) echo "Argument unknown: $1"; return 1;;
     esac
   done
@@ -542,10 +546,141 @@ connectiontopdc_cmd(){
     echo "Error: --acronym <acronym> is mandatory."
     return 1
   fi
+  if [[ -z "$SERVER" ]]; then
+    echo "Error: --server <host> is mandatory."
+    return 1
+  fi
+  if [[ -z "$PMUS" ]]; then
+    echo "Error: --pmus <list> is mandatory."
+    return 1
+  fi
+  
+  echo "Namespace: $NS"
+  echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
+  echo "Connection name: $NAME ($ACRONYM)"
 
   local ROOTPWD
   ROOTPWD="$(kubectl get secrets "$SECRET" -n "$NS" -o jsonpath='{.data.root}' | base64 --decode)"
 
+  SQL=$(cat <<EOF
+USE \`${DB_NAME}\`;
+SET @NULL := NULL;
+
+-- 1) Aggiorna Node.Settings come da log (usa SERVER passato)
+SET @NodeID := (SELECT ID FROM Node LIMIT 1);
+UPDATE Node
+SET Settings = CONCAT(
+  'RemoteStatusServerConnectionString={server=', '${SERVER}', ':8500; integratedSecurity=true}; ',
+  'datapublisherport=6165; ',
+  'RealTimeStatisticServiceUrl=http://${SERVER}:6052/historian; ',
+  'AlarmServiceUrl=http://${SERVER}:5018/alarmservices'
+)
+WHERE ID = @NodeID;
+
+-- 2) Inserisci il Device "concentrator" (collegamento al PDC remoto)
+SET @ParentUniqueID := UUID();
+INSERT INTO Device (
+  NodeID, ParentID, UniqueID, Acronym, Name, IsConcentrator, CompanyID, HistorianID,
+  AccessID, VendorDeviceID, ProtocolID, Longitude, Latitude, InterconnectionID,
+  ConnectionString, TimeZone, FramesPerSecond, TimeAdjustmentTicks, DataLossInterval,
+  ContactList, MeasuredLines, LoadOrder, Enabled, AllowedParsingExceptions,
+  ParsingExceptionWindow, DelayedConnectionInterval, AllowUseOfCachedConfiguration,
+  AutoStartDataParsingSequence, SkipDisableRealTimeData, MeasurementReportingInterval,
+  ConnectOndemand, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn
+) VALUES (
+  @NodeID, @NULL, @ParentUniqueID, '${ACRONYM}', '${NAME}', 1, @NULL, 2,
+  0, @NULL, 1, @NULL, @NULL, @NULL,
+  CONCAT('port=4712; maxSendQueueSize=-1; server=', '${SERVER}', '; islistener=false; transportprotocol=tcp; interface=0.0.0.0'),
+  @NULL, 30, 0, 5,
+  @NULL, @NULL, 0, 1, 10,
+  5, 5, 1,
+  1, 0, 100000,
+  0, 'polito', NOW(), 'polito', NOW()
+);
+
+-- Ricava l'ID del concentrator appena inserito
+SET @ParentID := (SELECT ID FROM Device WHERE UniqueID = @ParentUniqueID);
+EOF
+)
+
+  IFS=',' read -ra __PMUS_ARR <<< "$PMUS"
+  __idx=0
+  for __pmu in "${__PMUS_ARR[@]}"; do
+    __idx=$((__idx+1))                        # usato solo per AccessID/LoadOrder
+    # trim spazi ai lati del nome passato
+    __label="$(printf '%s' "$__pmu" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    __acronym="$__label"
+    __name="$__label"
+
+    read -r -d '' __SQL_BLOCK <<EOSQL
+-- === PMU ${__name} ===
+SET @ChildUniqueID := UUID();
+INSERT INTO Device (
+  NodeID, ParentID, UniqueID, Acronym, Name, IsConcentrator, CompanyID, HistorianID,
+  AccessID, VendorDeviceID, ProtocolID, Longitude, Latitude, InterconnectionID,
+  ConnectionString, TimeZone, FramesPerSecond, TimeAdjustmentTicks, DataLossInterval,
+  ContactList, MeasuredLines, LoadOrder, Enabled, AllowedParsingExceptions,
+  ParsingExceptionWindow, DelayedConnectionInterval, AllowUseOfCachedConfiguration,
+  AutoStartDataParsingSequence, SkipDisableRealTimeData, MeasurementReportingInterval,
+  ConnectOndemand, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn
+) VALUES (
+  @NodeID, @ParentID, @ChildUniqueID, '${__acronym}', '${__name}', 0, @NULL, 2,
+  ${__idx}, @NULL, 1, -98.6, 37.5, @NULL,
+  '', @NULL, 30, 0, 5,
+  @NULL, @NULL, ${__idx}, 1, 10,
+  5, 5, 1,
+  1, 0, 100000,
+  0, 'polito', NOW(), 'polito', NOW()
+);
+SET @DeviceID := (SELECT ID FROM Device WHERE UniqueID = @ChildUniqueID);
+
+-- Misure base (AV1, F, DF, S)
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}:AV1', @NULL, 7, @NULL, '${__acronym}-AV1', 0, 1, 0, 1, '${__name} Analog Value 1', 1, 'polito', NOW(), 'polito', NOW());
+
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}:F', @NULL, 5, @NULL, '${__acronym}-FQ', 0, 1, 0, 1, '${__name} Frequency', 1, 'polito', NOW(), 'polito', NOW());
+
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}:DF', @NULL, 6, @NULL, '${__acronym}-DF', 0, 1, 0, 1, '${__name} Frequency Delta (dF/dt)', 1, 'polito', NOW(), 'polito', NOW());
+
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}:S', @NULL, 8, @NULL, '${__acronym}-SF', 0, 1, 0, 1, '${__name} Status Flags', 1, 'polito', NOW(), 'polito', NOW());
+
+-- Phasor A/B/C con misure Magnitude (3) e Phase Angle (4)
+INSERT INTO Phasor (DeviceID, Label, Type, Phase, SourceIndex, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (@DeviceID, 'A +SV', 'V', '+', 1, 'polito', NOW(), 'polito', NOW());
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}-PM1:V', @NULL, 3, 1, '${__acronym}-PM1', 0, 1, 0, 1, '${__name} A +SV  + Voltage Magnitude', 1, 'polito', NOW(), 'polito', NOW());
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}-PA1:VH', @NULL, 4, 1, '${__acronym}-PA1', 0, 1, 0, 1, '${__name} A +SV  + Voltage Phase Angle', 1, 'polito', NOW(), 'polito', NOW());
+
+INSERT INTO Phasor (DeviceID, Label, Type, Phase, SourceIndex, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (@DeviceID, 'B +SV', 'V', '+', 2, 'polito', NOW(), 'polito', NOW());
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}-PM2:V', @NULL, 3, 2, '${__acronym}-PM2', 0, 1, 0, 1, '${__name} B +SV  + Voltage Magnitude', 1, 'polito', NOW(), 'polito', NOW());
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}-PA2:VH', @NULL, 4, 2, '${__acronym}-PA2', 0, 1, 0, 1, '${__name} B +SV  + Voltage Phase Angle', 1, 'polito', NOW(), 'polito', NOW());
+
+INSERT INTO Phasor (DeviceID, Label, Type, Phase, SourceIndex, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (@DeviceID, 'C +SV', 'V', '+', 3, 'polito', NOW(), 'polito', NOW());
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}-PM3:V', @NULL, 3, 3, '${__acronym}-PM3', 0, 1, 0, 1, '${__name} C +SV  + Voltage Magnitude', 1, 'polito', NOW(), 'polito', NOW());
+INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
+VALUES (2, @DeviceID, '_${__acronym}-PA3:VH', @NULL, 4, 3, '${__acronym}-PA3', 0, 1, 0, 1, '${__name} C +SV  + Voltage Phase Angle', 1, 'polito', NOW(), 'polito', NOW());
+EOSQL
+
+    SQL="${SQL}\n${__SQL_BLOCK}\n"
+  done
+
+  
+   echo "---- SQL da eseguire ----"; echo -e "$SQL" | sed 's/^/  /'
+
+  # Esegui nel pod MySQL (PXC) tramite kubectl
+  printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
+    mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
+
+  echo "[OK] Connection '${NAME}' to PDC server '${SERVER}' successfully created with PMUs: ${PMUS}"
 
 }
 case "$SUBCOMMAND" in
