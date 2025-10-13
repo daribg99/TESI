@@ -64,6 +64,10 @@ createhistorian options:
   --mri N                    MeasurementReportingInterval (default: 100000)
   --user TAG                 UpdatedBy/CreatedBy (default: polito)
 
+connectiontopdc options:
+  --name NAME                mandatory
+  --acronym ACR              mandatory
+
 Examples:
   $0 addpmu --name "Pmu-3" --ns lower --db lower
   $0 createoutputstream --ns lower --db lower --acronym LOWER --name low2high --pmus "PMU-3"
@@ -501,10 +505,54 @@ EOF
 
 }
 
+connectiontopdc_cmd(){
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_global; return 0;;
+      --ns) NS="$2"; shift 2;;
+      --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
+      --db) DB_NAME="$2"; shift 2;;
+      --pxc-pod) POD="$2"; shift 2;;
+      --haproxy-svc) SVC="$2"; shift 2;;
+      --secret-name) ROOT_SECRET_NAME="$2"; shift 2;;
+      --name) NAME="$2"; shift 2;;
+      --acronym) ACRONYM="$2"; shift 2;;
+      *) echo "Argument unknown: $1"; return 1;;
+    esac
+  done
+
+  # global
+  POD="${CLUSTER_PREFIX}-pxc-0"
+  SVC="${CLUSTER_PREFIX}-haproxy"
+  SECRET="${CLUSTER_PREFIX}-secrets"
+
+  if [[ -z "$NS" ]]; then
+    echo "Error: --ns <namespace> is mandatory."
+    return 1 
+  fi
+  if [[ -z "$DB_NAME" ]]; then
+    echo "Error: --db <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$NAME" ]]; then
+    echo "Error: --name <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$ACRONYM" ]]; then
+    echo "Error: --acronym <acronym> is mandatory."
+    return 1
+  fi
+
+  local ROOTPWD
+  ROOTPWD="$(kubectl get secrets "$SECRET" -n "$NS" -o jsonpath='{.data.root}' | base64 --decode)"
+
+
+}
 case "$SUBCOMMAND" in
   help) usage_global;;
   addpmu) addpmu_cmd "$@";;
   createoutputstream) createoutputstream_cmd "${GLOBAL_ARGS[@]}" "$@";;
   createhistorian) createhistorian_cmd "${GLOBAL_ARGS[@]}" "$@";;
+  connectiontopdc) connectiontopdc_cmd "${GLOBAL_ARGS[@]}" "$@";;
   *) usage_global; exit 1;;
 esac
