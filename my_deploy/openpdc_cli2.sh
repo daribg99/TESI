@@ -23,6 +23,7 @@ Subcommands:
   addpmu            Add a PMU (Device + Measurements)
   createoutputstream   Create an output stream
   createhistorian   Create a local historian
+  connectiontopdc   Connect to lower level PDC
   help              Show this help
 
 Global options:
@@ -70,16 +71,18 @@ connectiontopdc options:
   --server                    mandatory
   --pmus                      mandatory
 
+
 Examples:
   $0 addpmu --name "Pmu-3" --ns lower --db lower
   $0 createoutputstream --ns lower --db lower --acronym LOWER --name low2high --pmus "PMU-3"
   $0 createhistorian --db higher --ns higher
+  $0 connectiontopdc --ns higher --db higher --name "lowerpdc" --acronym "LOWER" --server "openpdc-low" --pmus "PMU-1,PMU-2,PMU-3"
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    addpmu|createoutputstream|createhistorian|help) SUBCOMMAND="$1"; shift; break;;
+    addpmu|createoutputstream|createhistorian|connectiontopdc|help) SUBCOMMAND="$1"; shift; break;;
     -h|--help) usage_global; exit 0;;
     *) echo "Unknown command: $1"; usage_global; exit 1;;
     esac
@@ -566,7 +569,7 @@ connectiontopdc_cmd(){
 USE \`${DB_NAME}\`;
 SET @NULL := NULL;
 
--- 1) Aggiorna Node.Settings come da log (usa SERVER passato)
+
 SET @NodeID := (SELECT ID FROM Node LIMIT 1);
 UPDATE Node
 SET Settings = CONCAT(
@@ -577,7 +580,7 @@ SET Settings = CONCAT(
 )
 WHERE ID = @NodeID;
 
--- 2) Inserisci il Device "concentrator" (collegamento al PDC remoto)
+
 SET @ParentUniqueID := UUID();
 INSERT INTO Device (
   NodeID, ParentID, UniqueID, Acronym, Name, IsConcentrator, CompanyID, HistorianID,
@@ -598,7 +601,7 @@ INSERT INTO Device (
   0, 'polito', NOW(), 'polito', NOW()
 );
 
--- Ricava l'ID del concentrator appena inserito
+
 SET @ParentID := (SELECT ID FROM Device WHERE UniqueID = @ParentUniqueID);
 EOF
 )
@@ -606,13 +609,12 @@ EOF
   IFS=',' read -ra __PMUS_ARR <<< "$PMUS"
   __idx=0
   for __pmu in "${__PMUS_ARR[@]}"; do
-    __idx=$((__idx+1))                        # usato solo per AccessID/LoadOrder
-    # trim spazi ai lati del nome passato
+    __idx=$((__idx+1))                        
     __label="$(printf '%s' "$__pmu" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     __acronym="$__label"
     __name="$__label"
 
-    read -r -d '' __SQL_BLOCK <<EOSQL
+    __SQL_BLOCK=$(cat <<EOSQL
 -- === PMU ${__name} ===
 SET @ChildUniqueID := UUID();
 INSERT INTO Device (
@@ -634,7 +636,6 @@ INSERT INTO Device (
 );
 SET @DeviceID := (SELECT ID FROM Device WHERE UniqueID = @ChildUniqueID);
 
--- Misure base (AV1, F, DF, S)
 INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
 VALUES (2, @DeviceID, '_${__acronym}:AV1', @NULL, 7, @NULL, '${__acronym}-AV1', 0, 1, 0, 1, '${__name} Analog Value 1', 1, 'polito', NOW(), 'polito', NOW());
 
@@ -669,12 +670,15 @@ VALUES (2, @DeviceID, '_${__acronym}-PM3:V', @NULL, 3, 3, '${__acronym}-PM3', 0,
 INSERT INTO Measurement (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex, SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
 VALUES (2, @DeviceID, '_${__acronym}-PA3:VH', @NULL, 4, 3, '${__acronym}-PA3', 0, 1, 0, 1, '${__name} C +SV  + Voltage Phase Angle', 1, 'polito', NOW(), 'polito', NOW());
 EOSQL
+    )
 
     SQL="${SQL}\n${__SQL_BLOCK}\n"
   done
 
   
-   echo "---- SQL da eseguire ----"; echo -e "$SQL" | sed 's/^/  /'
+   #echo "---------- BEGIN SQL ----------"
+   # printf "%s\n" "$SQL"
+  #echo "----------- END SQL -----------"
 
   # Esegui nel pod MySQL (PXC) tramite kubectl
   printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
