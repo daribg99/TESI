@@ -193,24 +193,24 @@ INSERT INTO Device (
   '${ACRONYM}', '${NAME}', 0, NULL, 1,
   @AccessID, NULL, 1, -98.6, 37.5, NULL,
   'port=${PORT}; maxSendQueueSize=-1; server=${SERVER}; islistener=false; transportprotocol=tcp; interface=0.0.0.0',
-  NULL, ${FPS}, 0, 5,
-  NULL, NULL, 0, 1, 10, 5, 5, 1, 1, 0,
+  '', ${FPS}, 0, 5,
+  '', NULL, 0, 1, 10, 5, 5, 1, 1, 0,
   100000, 0, 'polito', NOW(6), 'polito', NOW(6)
 );
 
 SET @DeviceID := LAST_INSERT_ID();
 
--- Misure base (freq, df/dt, status)
+
 INSERT INTO Measurement
   (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex,
    SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled,
    UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
 VALUES
-  (1, @DeviceID, '_${ACRONYM}:F',  NULL, 5,  NULL, '${ACRONYM}-FQ', 0, 1, 0, 1, '${NAME} Frequency',                         1, 'polito', NOW(6), 'polito', NOW(6)),
-  (1, @DeviceID, '_${ACRONYM}:DF', NULL, 6,  NULL, '${ACRONYM}-DF', 0, 1, 0, 1, '${NAME} Frequency Delta (dF/dt)',          1, 'polito', NOW(6), 'polito', NOW(6)),
-  (1, @DeviceID, '_${ACRONYM}:S',  NULL, 8,  NULL, '${ACRONYM}-SF', 0, 1, 0, 1, '${NAME} Status Flags',                      1, 'polito', NOW(6), 'polito', NOW(6));
+  (1, @DeviceID, '_${ACRONYM}:AV1', 'E', 7, @NULL, '${ACRONYM}-AV1', 0, 1, 0, 1, '${NAME} Analog Value 1',1, 'polito', NOW(6), 'polito', NOW(6)),                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+  (1, @DeviceID, '_${ACRONYM}:F',  NULL, 5,  NULL, '${ACRONYM}-FQ', 0, 1, 0, 1, '${NAME} Frequency',1, 'polito', NOW(6), 'polito', NOW(6)),
+  (1, @DeviceID, '_${ACRONYM}:DF', NULL, 6,  NULL, '${ACRONYM}-DF', 0, 1, 0, 1, '${NAME} Frequency Delta (dF/dt)',1, 'polito', NOW(6), 'polito', NOW(6)),
+  (1, @DeviceID, '_${ACRONYM}:S',  NULL, 8,  NULL, '${ACRONYM}-SF', 0, 1, 0, 1, '${NAME} Status Flags',1, 'polito', NOW(6), 'polito', NOW(6));
 
--- Tensioni A/B/C: magnitudo e angolo
 INSERT INTO Measurement
   (HistorianID, DeviceID, PointTag, AlternateTag, SignalTypeID, PhasorSourceIndex,
    SignalReference, Adder, Multiplier, Subscribed, Internal, Description, Enabled,
@@ -223,12 +223,50 @@ VALUES
   (1, @DeviceID, '_${ACRONYM}-PM3:V',  NULL, 3, 3, '${ACRONYM}-PM3', 0, 1, 0, 1, '${NAME} C  + Voltage Magnitude', 1, 'polito', NOW(6), 'polito', NOW(6)),
   (1, @DeviceID, '_${ACRONYM}-PA3:VH', NULL, 4, 3, '${ACRONYM}-PA3', 0, 1, 0, 1, '${NAME} C  + Voltage Phase Angle', 1, 'polito', NOW(6), 'polito', NOW(6));
 
--- Time Quality Flags
 INSERT INTO Measurement
   (HistorianID, DeviceID, PointTag, SignalTypeID, PhasorSourceIndex, SignalReference, Description, Enabled)
 VALUES
   (1, @DeviceID, 'GPA_${ACRONYM}:QF', 13, NULL, '${ACRONYM}-QF', '${NAME} Time Quality Flags', 1);
 INSERT INTO TrackedChange (TableName, PrimaryKeyColumn, PrimaryKeyValue) VALUES ('Device', 'ID', @DeviceID);
+
+INSERT INTO Phasor (DeviceID, Label, Type, Phase, SourceIndex, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn) VALUES (@DeviceID, 'A', 'V', '+', 1, 'polito', timestamp('2025-10-02 13:33:51.738862'), 'polito', timestamp('2025-10-02 13:33:51.738862'));
+INSERT INTO Phasor (DeviceID, Label, Type, Phase, SourceIndex, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn) VALUES (@DeviceID, 'B', 'V', '+', 2, 'polito', timestamp('2025-10-02 13:33:51.993151'), 'polito', timestamp('2025-10-02 13:33:51.993151'));
+INSERT INTO Phasor (DeviceID, Label, Type, Phase, SourceIndex, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn) VALUES (@DeviceID, 'C', 'V', '+', 3, 'polito', timestamp('2025-10-02 13:33:52.156012'), 'polito', timestamp('2025-10-02 13:33:52.156012'));
+
+INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!PMU:ST1', 11, '${ACRONYM}!PMU-ST1', 'Device statistic for Number of data quality errors reported by device during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                                
+INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!PMU:ST2', 11, '${ACRONYM}!PMU-ST2', 'Device statistic for Number of time quality errors reported by device during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                                
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!PMU:ST3', 11, '${ACRONYM}!PMU-ST3', 'Device statistic for Number of device errors reported by device during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                                     
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!PMU:ST4', 11, '${ACRONYM}!PMU-ST4', 'Device statistic for Number of measurements received from device during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                                    
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!PMU:ST5', 11, '${ACRONYM}!PMU-ST5', 'Device statistic for Expected number of measurements received from device during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                           
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!PMU:ST6', 11, '${ACRONYM}!PMU-ST6', 'Device statistic for Number of measurements received while device was reporting errors during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                              
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!PMU:ST7', 11, '${ACRONYM}!PMU-ST7', 'Device statistic for Number of defined measurements (per frame) from device during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                         
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST1', 11, '${ACRONYM}!IS-ST1', 'InputStream statistic for Total number of frames received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                           
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST2', 11, '${ACRONYM}!IS-ST2', 'InputStream statistic for Timestamp of last received data frame from input stream.', 1);                                                                                                                                                                                                                                                                                                                                                                                    
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST3', 11, '${ACRONYM}!IS-ST3', 'InputStream statistic for Number of frames that were not received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                   
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST4', 11, '${ACRONYM}!IS-ST4', 'InputStream statistic for Number of CRC errors reported from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                             
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST5', 11, '${ACRONYM}!IS-ST5', 'InputStream statistic for Number of out-of-order frames received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                    
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST6', 11, '${ACRONYM}!IS-ST6', 'InputStream statistic for Minimum latency from input stream, in milliseconds, during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                         
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST7', 11, '${ACRONYM}!IS-ST7', 'InputStream statistic for Maximum latency from input stream, in milliseconds, during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                         
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST8', 11, '${ACRONYM}!IS-ST8', 'InputStream statistic for Boolean value representing if input stream was continually connected during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                        
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST9', 11, '${ACRONYM}!IS-ST9', 'InputStream statistic for Boolean value representing if input stream has received (or has cached) a configuration frame during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                               
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST10', 11, '${ACRONYM}!IS-ST10', 'InputStream statistic for Number of configuration changes reported by input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                  
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST11', 11, '${ACRONYM}!IS-ST11', 'InputStream statistic for Number of data frames received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                          
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST12', 11, '${ACRONYM}!IS-ST12', 'InputStream statistic for Number of configuration frames received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                 
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST13', 11, '${ACRONYM}!IS-ST13', 'InputStream statistic for Number of header frames received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                        
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST14', 11, '${ACRONYM}!IS-ST14', 'InputStream statistic for Average latency, in milliseconds, for data received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                     
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST15', 11, '${ACRONYM}!IS-ST15', 'InputStream statistic for Frame rate as defined by input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                                     
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST16', 11, '${ACRONYM}!IS-ST16', 'InputStream statistic for Latest actual mean frame rate for data received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                         
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST17', 11, '${ACRONYM}!IS-ST17', 'InputStream statistic for Latest actual mean Mbps data rate for data received from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                     
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST18', 11, '${ACRONYM}!IS-ST18', 'InputStream statistic for Number of data units that were not received at least once from input stream during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                               
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST19', 11, '${ACRONYM}!IS-ST19', 'InputStream statistic for Number of bytes received from the input source during last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                            
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST20', 11, '${ACRONYM}!IS-ST20', 'InputStream statistic for Number of processed measurements reported by the input stream during the lifetime of the input stream.', 1);                                                                                                                                                                                                                                                                                                                                    
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST21', 11, '${ACRONYM}!IS-ST21', 'InputStream statistic for Number of bytes received from the input source during the lifetime of the input stream.', 1);                                                                                                                                                                                                                                                                                                                                                   
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST22', 11, '${ACRONYM}!IS-ST22', 'InputStream statistic for The minimum number of measurements received per second during the last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST23', 11, '${ACRONYM}!IS-ST23', 'InputStream statistic for The maximum number of measurements received per second during the last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST24', 11, '${ACRONYM}!IS-ST24', 'InputStream statistic for The average number of measurements received per second during the last reporting interval.', 1);                                                                                                                                                                                                                                                                                                                                                
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST25', 11, '${ACRONYM}!IS-ST25', 'InputStream statistic for Minimum latency from input stream, in milliseconds, during the lifetime of the input stream.', 1);                                                                                                                                                                                                                                                                                                                                              
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST26', 11, '${ACRONYM}!IS-ST26', 'InputStream statistic for Maximum latency from input stream, in milliseconds, during the lifetime of the input stream.', 1);                                                                                                                                                                                                                                                                                                                                              
+ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalReference, Description, Enabled) VALUES(2, @DeviceID, 'GPA_${ACRONYM}!IS:ST27', 11, '${ACRONYM}!IS-ST27', 'InputStream statistic for Average latency, in milliseconds, for data received from input stream during the lifetime of the input stream.', 1);
 EOF
 )
 
@@ -239,6 +277,10 @@ EOF
 
 printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
   mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
+
+echo "🔄 Reloading openPDC configuration..."
+  #kubectl exec -n lower -i "${POD}" -- bash -c "mono /opt/openPDC/openPDCConsole.exe -ReloadConfig"
+echo "✅ Configuration successfully reloaded!"
 
 echo "[OK] PMU '$NAME' ($ACRONYM) successfully added on db $DB_NAME."
 }
@@ -351,9 +393,7 @@ EOF
     pmu_name="$(echo "$pmu" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
 
     BLOCK=$(cat <<EOF
--- ======================================================
--- PMU ${pmu}
--- Device dello stream
+
 INSERT INTO OutputStreamDevice (
   NodeID, AdapterID, IDCode, Acronym, BpaAcronym, Name,
   PhasorDataFormat, FrequencyDataFormat, AnalogDataFormat, CoordinateFormat,
@@ -365,7 +405,6 @@ INSERT INTO OutputStreamDevice (
 );
 SET @OSDevID := LAST_INSERT_ID();
 
--- Phasor A/B/C (tensioni)
 INSERT INTO OutputStreamDevicePhasor
   (NodeID, OutputStreamDeviceID, Label, Type, Phase, ScalingValue, LoadOrder, UpdatedBy, UpdatedOn, CreatedBy, CreatedOn)
 VALUES
@@ -399,11 +438,11 @@ SQL+="$BLOCK"
   done
 
 
-  # esegui
+  
    printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
    mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
-   # Stampa SQL per debug
+   
     #echo "---------- BEGIN SQL ----------"
     #printf "%s\n" "$SQL"
     #echo "----------- END SQL -----------"
@@ -680,9 +719,19 @@ EOSQL
    # printf "%s\n" "$SQL"
   #echo "----------- END SQL -----------"
 
+  
   # Esegui nel pod MySQL (PXC) tramite kubectl
   printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
     mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
+
+  OPENPDC_POD="openpdc-higher-75c5c54d9d-29q55"
+  #echo "🔄 Reloading openPDC configuration..."
+  #kubectl exec -n lower -i "${OPENPDC_POD}" -- bash -c "mono /opt/openPDC/openPDCConsole.exe -ReloadConfig"
+  #echo "✅ Configuration successfully reloaded!"
+
+  echo "🔄 Restarting openPDC pod to apply configuration. Please wait..."
+  kubectl delete pod -n lower "${OPENPDC_POD}"
+  echo "✅ openPDC pod restarted and configuration reloaded!"
 
   echo "[OK] Connection '${NAME}' to PDC server '${SERVER}' successfully created with PMUs: ${PMUS}"
 

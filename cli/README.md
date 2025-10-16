@@ -57,7 +57,7 @@ kubectl apply -n <namespace> -f openpdc.yaml
 2) Make sure the nodePort values in your OpenPDC services are unique if deploying multiple instances.
 
 
-### To retrive queries from PerconaDB:
+# To retrive queries from PerconaDB:
 1) Take db password from secret:
 ```
 kubectl get secrets cluster1-secrets -n <namespace-name> -o yaml -o jsonpath='{.data.root}' | base64 --decode | tr '\n' ' ' && echo " "
@@ -92,4 +92,16 @@ mysql -uroot -p"$PW" -e "TRUNCATE TABLE mysql.general_log;"
 7) Turn off general_log
 ```
 mysql -uroot -p"$PW" -e "SET GLOBAL general_log=OFF;"
+```
+
+# Port forwarding
+Enable port forwarding ssh-ing to the remote k8s node using this command (based on the deployment).
+Connect to lower-pdc:
+```
+ssh -L 3306:localhost:30006 -L 8500:localhost:30085 -L 6165:localhost:30065 user@kubernetes-node
+```
+
+   Connect to higher-pdc:
+```
+ssh -L 3306:localhost:30006 -L 8500:localhost:30185 -L 6165:localhost:30165 user@kubernetes-node
 ```
