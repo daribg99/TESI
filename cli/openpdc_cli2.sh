@@ -29,6 +29,7 @@ Subcommands:
 Global options:
   --ns namespace                     mandatory
   --db NAME                          mandatory
+  --pod NAME                         (es. openpdc-pod-1234-5678) mandatory
   --cluster-prefix NAME              (default: cluster1)
   --pxc-pod NAME                     (default: <cluster>-pxc-0)
   --haproxy-svc NAME                 (default: <cluster>-haproxy)
@@ -37,7 +38,6 @@ Global options:
 
 addpmu options:
   --name NAME            (es. "Pmu-3") mandatory
-  --pod NAME             ( es openpdc-pod-1234-5678 ) mandatory
   --acronym ACR          (es. PMU-3)  
   --server HOST          (endpoint PMU) 
   --port N               (default: 4712)
@@ -75,9 +75,9 @@ connectiontopdc options:
 
 Examples:
   $0 addpmu --name "Pmu-3" --pod <podname> --ns lower --db lower
-  $0 createoutputstream --ns lower --db lower --acronym LOWER --name low2high --pmus "PMU-3"
-  $0 createhistorian --db higher --ns higher
-  $0 connectiontopdc --ns higher --db higher --name "lowerpdc" --acronym "LOWER" --server "openpdc-low" --pmus "PMU-1,PMU-2,PMU-3"
+  $0 createoutputstream --ns lower --db lower --pod <podname> --acronym LOWER --name low2high  --pmus "PMU-3"
+  $0 createhistorian --db higher --ns higher --pod <podname>
+  $0 connectiontopdc --ns higher --db higher --name "lowerpdc" --pod <podname> --acronym "LOWER" --server "openpdc-low"  --pmus "PMU-1,PMU-2,PMU-3"
 USAGE
 }
 
@@ -292,7 +292,7 @@ echo "🔄 Reloading openPDC configuration..."
   echo "✅ Configuration successfully reloaded!"
 else
   echo "Impossible to send ReloadConfig to '$OPENPDC_POD'." >&2
-  echo "   Check that openPDC is running inside a screen session called 'openpdc'." >&2
+  echo "Check that openPDC is running inside a screen session called 'openpdc'. Otherwise, run the ReloadConfig via the openPDC Manager." >&2
 fi
 
 echo "[OK] PMU '$NAME' ($ACRONYM) successfully added on db '$DB_NAME'."
@@ -324,6 +324,7 @@ createoutputstream_cmd() {
       --ns) NS="$2"; shift 2;;
       --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
       --db) DB_NAME="$2"; shift 2;;
+      --pod) OPENPDC_POD="$2"; shift 2;;
       --pxc-pod) POD="$2"; shift 2;;
       --haproxy-svc) SVC="$2"; shift 2;;
       --secret-name) ROOT_SECRET_NAME="$2"; shift 2;;
@@ -363,6 +364,10 @@ createoutputstream_cmd() {
   fi
   if [[ -z "$ACRONYM" ]]; then
     echo "Error: --acronym <acronym> is mandatory."
+    return 1
+  fi
+  if [[ -z "$OPENPDC_POD" ]]; then
+    echo "Error: --pod <podname> is mandatory."
     return 1
   fi
 
@@ -460,6 +465,16 @@ SQL+="$BLOCK"
     #echo "---------- BEGIN SQL ----------"
     #printf "%s\n" "$SQL"
     #echo "----------- END SQL -----------"
+  echo "🔄 Reloading openPDC configuration..."
+  if kubectl exec -i "$OPENPDC_POD" -n "$NS" -c openpdc -- bash -lc \
+   "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
+   >/dev/null 2>&1; then
+    sleep 1
+    echo "✅ Configuration successfully reloaded!"
+  else
+    echo "Impossible to send ReloadConfig to '$OPENPDC_POD'." >&2
+    echo "Check that openPDC is running inside a screen session called 'openpdc'. Otherwise, run the ReloadConfig via the openPDC Manager." >&2
+  fi
 
   echo  "[OK] OutputStream '${NAME}' (${ACRONYM}) successfully created with PMUs: ${PMUS}"
 }
