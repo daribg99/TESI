@@ -37,6 +37,7 @@ Global options:
 
 addpmu options:
   --name NAME            (es. "Pmu-3") mandatory
+  --pod NAME             ( es openpdc-pod-1234-5678 ) mandatory
   --acronym ACR          (es. PMU-3)  
   --server HOST          (endpoint PMU) 
   --port N               (default: 4712)
@@ -73,7 +74,7 @@ connectiontopdc options:
 
 
 Examples:
-  $0 addpmu --name "Pmu-3" --ns lower --db lower
+  $0 addpmu --name "Pmu-3" --pod <podname> --ns lower --db lower
   $0 createoutputstream --ns lower --db lower --acronym LOWER --name low2high --pmus "PMU-3"
   $0 createhistorian --db higher --ns higher
   $0 connectiontopdc --ns higher --db higher --name "lowerpdc" --acronym "LOWER" --server "openpdc-low" --pmus "PMU-1,PMU-2,PMU-3"
@@ -111,6 +112,7 @@ addpmu_cmd() {
       --ns) NS="$2"; shift 2;;
       --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
       --db) DB_NAME="$2"; shift 2;;
+      --pod) OPENPDC_POD="$2"; shift 2;;
       --pxc-pod) POD="$2"; shift 2;;
       --haproxy-svc) SVC="$2"; shift 2;;
       --secret-name) ROOT_SECRET_NAME="$2"; shift 2;;
@@ -123,13 +125,17 @@ addpmu_cmd() {
     esac
   done
   
-  #if no ns or db, exit
+  #if no ns or db or pod, exit
   if [[ -z "$NS" ]]; then
     echo "Error: --ns <namespace> is mandatory."
     return 1
   fi
   if [[ -z "$DB_NAME" ]]; then
     echo "Error: --db <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$OPENPDC_POD" ]]; then
+    echo "Error: --pod <podname> is mandatory."
     return 1
   fi
   # ---- derive ACRONYM and SERVER from NAME if missing ----
@@ -277,12 +283,20 @@ EOF
 
 printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
   mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
-
+sleep 1
 echo "🔄 Reloading openPDC configuration..."
-  #kubectl exec -n lower -i "${POD}" -- bash -c "mono /opt/openPDC/openPDCConsole.exe -ReloadConfig"
-echo "✅ Configuration successfully reloaded!"
+  if kubectl exec -i "$OPENPDC_POD" -n "$NS" -c openpdc -- bash -lc \
+   "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
+   >/dev/null 2>&1; then
+  sleep 1
+  echo "✅ Configuration successfully reloaded!"
+else
+  echo "Impossible to send ReloadConfig to '$OPENPDC_POD'." >&2
+  echo "   Check that openPDC is running inside a screen session called 'openpdc'." >&2
+fi
 
-echo "[OK] PMU '$NAME' ($ACRONYM) successfully added on db $DB_NAME."
+echo "[OK] PMU '$NAME' ($ACRONYM) successfully added on db '$DB_NAME'."
+
 }
 
 

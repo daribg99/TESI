@@ -84,6 +84,21 @@ mysql -uroot -p"$PW" -e "
 AND user_host NOT LIKE 'operator%'
   ORDER BY event_time;"
   ```
+
+Or, if you are looking at SET, INSERT and DELETE:
+ ```
+mysql -uroot -p"$PW" -e "
+  SELECT
+    CONVERT_TZ(event_time,'+00:00','Europe/Rome') AS event_time_rome,
+    user_host,
+    CONVERT(argument USING utf8) AS query
+  FROM mysql.general_log
+  WHERE command_type='Query'
+    AND user_host NOT LIKE 'monitor%'
+    AND user_host NOT LIKE 'operator%'
+    AND argument REGEXP '^(SET|INSERT|DELETE)[[:space:]]'
+  ORDER BY event_time;"
+ ```
 6) Clear table
 ```
 mysql -uroot -p"$PW" -e "TRUNCATE TABLE mysql.general_log;"
