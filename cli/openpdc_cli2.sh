@@ -493,6 +493,7 @@ createhistorian_cmd() {
       --ns) NS="$2"; shift 2;;
       --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
       --db) DB_NAME="$2"; shift 2;;
+      --pod) OPENPDC_POD="$2"; shift 2;;
       --pxc-pod) POD="$2"; shift 2;;
       --haproxy-svc) SVC="$2"; shift 2;;
       --secret-name) ROOT_SECRET_NAME="$2"; shift 2;;
@@ -504,7 +505,7 @@ createhistorian_cmd() {
     esac
   done
 
-  #if no ns or db, exit
+  #if no ns or db or podname, exit
   if [[ -z "$NS" ]]; then
     echo "Error: --ns <namespace> is mandatory."
     return 1 
@@ -513,7 +514,10 @@ createhistorian_cmd() {
     echo "Error: --db <name> is mandatory."
     return 1
   fi
-
+  if [[ -z "$OPENPDC_POD" ]]; then
+    echo "Error: --pod <podname> is mandatory."
+    return 1
+  fi
   # global
   POD="${CLUSTER_PREFIX}-pxc-0"
   SVC="${CLUSTER_PREFIX}-haproxy"
@@ -526,11 +530,8 @@ createhistorian_cmd() {
   local ROOTPWD
   ROOTPWD="$(kubectl get secrets "$SECRET" -n "$NS" -o jsonpath='{.data.root}' | base64 --decode)"
 
-  # --- costruzione SQL ---
-  # Se CONNSTR è vuoto, usa NULL; altrimenti quota la stringa
   local CONN_SQL="NULL"
   if [[ -n "$CONNSTR" ]]; then
-    # escape apici singoli
     local ESCONN
     ESCONN="$(printf "%s" "$CONNSTR" | sed "s/'/''/g")"
     CONN_SQL="'${ESCONN}'"
@@ -574,6 +575,19 @@ EOF
   printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
     mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
+  echo "🔄 Reloading openPDC configuration..."
+
+#set db to lower for pdc location
+  if kubectl exec -i "$OPENPDC_POD" -n lower -c openpdc -- bash -lc \
+   "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
+   >/dev/null 2>&1; then
+    sleep 1
+    echo "✅ Configuration successfully reloaded!"
+  else
+    echo "Impossible to send ReloadConfig to '$OPENPDC_POD'." >&2
+    echo "Check that openPDC is running inside a screen session called 'openpdc'. Otherwise, run the ReloadConfig via the openPDC Manager." >&2
+  fi
+
   echo "[OK] Historian '${NAME}' (${ACRONYM}) successfully created."
 
 }
@@ -585,6 +599,7 @@ connectiontopdc_cmd(){
       --ns) NS="$2"; shift 2;;
       --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
       --db) DB_NAME="$2"; shift 2;;
+      --pod) OPENPDC_POD="$2"; shift 2;;
       --pxc-pod) POD="$2"; shift 2;;
       --haproxy-svc) SVC="$2"; shift 2;;
       --secret-name) ROOT_SECRET_NAME="$2"; shift 2;;
@@ -623,6 +638,10 @@ connectiontopdc_cmd(){
   fi
   if [[ -z "$PMUS" ]]; then
     echo "Error: --pmus <list> is mandatory."
+    return 1
+  fi
+  if [[ -z "$OPENPDC_POD" ]]; then
+    echo "Error: --pod <podname> is mandatory."
     return 1
   fi
   
@@ -749,18 +768,19 @@ EOSQL
   #echo "----------- END SQL -----------"
 
   
-  # Esegui nel pod MySQL (PXC) tramite kubectl
   printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
     mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
-  OPENPDC_POD="openpdc-higher-75c5c54d9d-29q55"
-  #echo "🔄 Reloading openPDC configuration..."
-  #kubectl exec -n lower -i "${OPENPDC_POD}" -- bash -c "mono /opt/openPDC/openPDCConsole.exe -ReloadConfig"
-  #echo "✅ Configuration successfully reloaded!"
-
-  echo "🔄 Restarting openPDC pod to apply configuration. Please wait..."
-  kubectl delete pod -n lower "${OPENPDC_POD}"
-  echo "✅ openPDC pod restarted and configuration reloaded!"
+  #set db to lower for pdc location
+  if kubectl exec -i "$OPENPDC_POD" -n lower -c openpdc -- bash -lc \
+   "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
+   >/dev/null 2>&1; then
+    sleep 1
+    echo "✅ Configuration successfully reloaded!"
+  else
+    echo "Impossible to send ReloadConfig to '$OPENPDC_POD'." >&2
+    echo "Check that openPDC is running inside a screen session called 'openpdc'. Otherwise, run the ReloadConfig via the openPDC Manager." >&2
+  fi
 
   echo "[OK] Connection '${NAME}' to PDC server '${SERVER}' successfully created with PMUs: ${PMUS}"
 
