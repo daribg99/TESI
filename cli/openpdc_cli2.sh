@@ -8,7 +8,7 @@ DB_NAME=""             # --db
 PXC_POD=""                    # --pxc-pod (default: <cluster_prefix>-pxc-0)
 HAPROXY_SVC=""                # --haproxy-svc (default: <cluster_prefix>-haproxy)
 ROOT_SECRET_NAME=""           # --secret-name (default: <cluster_prefix>-secrets)
-
+OPENPDC_POD=""                  # --pod <podname>  (OBBLIGATORIO)
 # ---------- Helpers ----------
 die() { echo "ERRORE: $*" >&2; exit 1; }
 info() { echo "[INFO] $*"; }
@@ -96,20 +96,58 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+check_global_params(){
+  [[ -z "${CLUSTER_PREFIX:-}" ]] && CLUSTER_PREFIX="cluster1"
+
+  POD="${POD:-${PXC_POD:-}}"
+  POD="${POD:-${CLUSTER_PREFIX}-pxc-0}"
+
+  PXC_POD="${PXC_POD:-${POD}}"
+
+  SVC="${SVC:-${HAPROXY_SVC:-${CLUSTER_PREFIX}-haproxy}}"
+  HAPROXY_SVC="${HAPROXY_SVC:-${SVC}}"
+
+  SECRET="${SECRET:-${ROOT_SECRET_NAME:-${CLUSTER_PREFIX}-secrets}}"
+  ROOT_SECRET_NAME="${ROOT_SECRET_NAME:-${SECRET}}"
+
+  OPENPDC_POD="${OPENPDC_POD:-${POD:-}}"
+
+  if [[ -z "${NS:-}" ]]; then
+    echo "Error: namespace not set (use --ns)." >&2
+    return 1
+  fi
+
+  if ! kubectl get namespace "$NS" >/dev/null 2>&1; then
+    echo "Error: Namespace '$NS' does not exist." >&2
+    return 1
+  fi
+
+  if ! kubectl get pod "$PXC_POD" -n "$NS" >/dev/null 2>&1; then
+    echo "Error: Pod '$PXC_POD' does not exist in namespace '$NS'." >&2
+    return 1
+  fi
+
+  if ! kubectl get svc "$HAPROXY_SVC" -n "$NS" >/dev/null 2>&1; then
+    echo "Error: Service '$HAPROXY_SVC' does not exist in namespace '$NS'." >&2
+    return 1
+  fi
+
+  if [[ -z "${OPENPDC_POD:-}" ]]; then
+    echo "Error: openPDC pod not set (use --pod)." >&2
+    return 1
+  fi
+  if ! kubectl get pod "$OPENPDC_POD" -n "$NS" >/dev/null 2>&1; then
+    echo "Error: Pod '$OPENPDC_POD' does not exist in namespace '$NS'." >&2
+    return 1
+  fi
+
+  return 0
+}
+
 addpmu_cmd() {
-    # default
-    POD="${CLUSTER_PREFIX}-pxc-0"
-    SVC="${CLUSTER_PREFIX}-haproxy"
-    SECRET="${CLUSTER_PREFIX}-secrets"
-    
+      
     local FPS=25 PORT=4712 NAME="" ACRONYM="" SERVER=""
 
-    [[ -z "$PXC_POD" ]] && PXC_POD="${CLUSTER_PREFIX}-pxc-0"
-    [[ -z "$HAPROXY_SVC" ]] && HAPROXY_SVC="${CLUSTER_PREFIX}-haproxy"
-    [[ -z "$ROOT_SECRET_NAME" ]] && ROOT_SECRET_NAME="${CLUSTER_PREFIX}-secrets"
-             
-
-  # parse args
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)
@@ -165,20 +203,18 @@ addpmu_cmd() {
     SERVER="$(echo "$SERVER" | sed 's/[^a-z0-9.-]//g; s/-\{2,\}/-/g; s/^-//; s/-$//')"
   fi
 
-  # If still missing SERVER, use ACRONYM lowercased: es. PMU-3 -> pmu-3
   if [[ -z "$NAME" && -n "$ACRONYM" ]]; then
     # es: PMU-3 -> Pmu-3
     NAME="$(echo "$ACRONYM" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
   fi
 
+  check_global_params || exit 1
   echo "Namespace: $NS"
   echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
   echo "Name: $NAME  Acronym: $ACRONYM  Server: $SERVER  FPS: $FPS  Port: $PORT"
 
-  # take ROOT password from k8s secret
   ROOTPWD="$(kubectl get secrets "$SECRET" -n "$NS" -o jsonpath='{.data.root}' | base64 --decode)"
   
-  # exit if acronym already exists  
   EXISTS=$(kubectl exec -n "$NS" -it "$POD" -c pxc -- \
     mysql -h "$SVC" -uroot -p"$ROOTPWD" -N -e "SELECT COUNT(*) FROM ${DB_NAME}.Device WHERE Acronym='${ACRONYM//\'/\'\'}';" 2>/dev/null)
   if [[ "$EXISTS" =~ ^[0-9]+$ ]] && [[ "$EXISTS" -gt 0 && $FORCE -ne 1 ]]; then
@@ -283,7 +319,6 @@ INSERT INTO Measurement(HistorianID, DeviceID, PointTag, SignalTypeID, SignalRef
 EOF
 )
 
-# Stampa la SQL sempre
 #echo "---------- BEGIN SQL ----------"
 #printf "%s\n" "$SQL"
 #echo "----------- END SQL -----------"
@@ -308,28 +343,22 @@ echo "[OK] PMU '$NAME' ($ACRONYM) successfully added on db '$DB_NAME'."
 
 
 createoutputstream_cmd() {
-  # defaults
     FPS=30
     PORT=4712
     NAME=""
     ACRONYM=""
     SERVER=""
-
-    [[ -z "$PXC_POD" ]] && PXC_POD="${CLUSTER_PREFIX}-pxc-0"
-    [[ -z "$HAPROXY_SVC" ]] && HAPROXY_SVC="${CLUSTER_PREFIX}-haproxy"
-    [[ -z "$ROOT_SECRET_NAME" ]] && ROOT_SECRET_NAME="${CLUSTER_PREFIX}-secrets"
     
     local PMUS=""  NOMFREQ=60 LAG=3 LEAD=1 USERTAG="polito" 
 
-  # parse args
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)
-      createoutputstream_usage
+      usage_global
       return 0
       ;;
       --ns) NS="$2"; shift 2;;
-      --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
+      --cluster-prefix) CLUSTER_PREFIX="$2"; shift 2;;
       --db) DB_NAME="$2"; shift 2;;
       --pod) OPENPDC_POD="$2"; shift 2;;
       --pxc-pod) POD="$2"; shift 2;;
@@ -382,10 +411,9 @@ createoutputstream_cmd() {
   echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
   echo "OutputStream: $NAME ($ACRONYM)  PMUs: $PMUS  FPS: $FPS  Port: $PORT"
 
-  # root pwd da secret
+  check_global_params || exit 1
   ROOTPWD="$(kubectl get secrets "$SECRET" -n "$NS" -o jsonpath='{.data.root}' | base64 --decode)"
 
-  # prepara SQL base per OutputStream
   SQL=$(cat <<EOF
 USE \`${DB_NAME}\`;
 SET @NodeID := (SELECT ID FROM Node LIMIT 1);
@@ -410,7 +438,6 @@ INSERT INTO OutputStream (
 SET @AdapterID := LAST_INSERT_ID();
 EOF
   )
-  # for each PMU, add Device, Phasors, Analogs, Measurements
   IFS=',' read -ra PMU_ARR <<< "$PMUS"
   idcode=1
   for raw in "${PMU_ARR[@]}"; do
@@ -498,7 +525,7 @@ createhistorian_cmd() {
     case "$1" in
       -h|--help) usage_global; return 0;;
       --ns) NS="$2"; shift 2;;
-      --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
+      --cluster-prefix) CLUSTER_PREFIX="$2"; shift 2;;
       --db) DB_NAME="$2"; shift 2;;
       --pod) OPENPDC_POD="$2"; shift 2;;
       --pxc-pod) POD="$2"; shift 2;;
@@ -525,11 +552,9 @@ createhistorian_cmd() {
     echo "Error: --pod <podname> is mandatory."
     return 1
   fi
-  # global
-  POD="${CLUSTER_PREFIX}-pxc-0"
-  SVC="${CLUSTER_PREFIX}-haproxy"
-  SECRET="${CLUSTER_PREFIX}-secrets"
+  
 
+  check_global_params || exit 1
   echo "Namespace: $NS"
   echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
   echo "Historian: $NAME ($ACRONYM)"
@@ -583,8 +608,7 @@ EOF
     mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
   
-
-#set db to lower for pdc location
+#set ns to lower for openPDC pod location
 echo "🔄 Reloading openPDC configuration..."
   if kubectl exec -i "$OPENPDC_POD" -n lower -c openpdc -- bash -lc \
    "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
@@ -618,12 +642,7 @@ connectiontopdc_cmd(){
       *) echo "Argument unknown: $1"; return 1;;
     esac
   done
-
-  # global
-  POD="${CLUSTER_PREFIX}-pxc-0"
-  SVC="${CLUSTER_PREFIX}-haproxy"
-  SECRET="${CLUSTER_PREFIX}-secrets"
-
+  
   if [[ -z "$NS" ]]; then
     echo "Error: --ns <namespace> is mandatory."
     return 1 
@@ -653,6 +672,7 @@ connectiontopdc_cmd(){
     return 1
   fi
   
+  check_global_params || exit 1
   echo "Namespace: $NS"
   echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
   echo "Connection name: $NAME ($ACRONYM)"
@@ -779,7 +799,7 @@ EOSQL
   printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
     mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
-  #set db to lower for pdc location
+#set ns to lower for openPDC pod location
   echo "🔄 Reloading openPDC configuration..."
   if kubectl exec -i "$OPENPDC_POD" -n lower -c openpdc -- bash -lc \
    "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
@@ -812,11 +832,6 @@ createaccount_cmd() {
     esac
   done
 
-  # global
-  POD="${CLUSTER_PREFIX}-pxc-0"
-  SVC="${CLUSTER_PREFIX}-haproxy"
-  SECRET="${CLUSTER_PREFIX}-secrets"
-
   if [[ -z "$NS" ]]; then
     echo "Error: --ns <namespace> is mandatory."
     return 1 
@@ -841,7 +856,12 @@ createaccount_cmd() {
     echo "Error: --lastname <name> is mandatory."
     return 1
   fi
+  if [[ -z "$OPENPDC_POD" ]]; then
+    echo "Error: --pod <podname> is mandatory."
+    return 1
+  fi
 
+  check_global_params || exit 1
   echo "Namespace: $NS"
   echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
   echo "Creating user account: $USERNAME ($FIRSTNAME $LASTNAME)"
@@ -905,7 +925,7 @@ SQL_EOF
   printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
     mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
-  set db to lower for pdc location
+  #set db to lower for pdc location
   if kubectl exec -i "$OPENPDC_POD" -n lower -c openpdc -- bash -lc \
    "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
    >/dev/null 2>&1; then
