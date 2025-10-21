@@ -24,6 +24,7 @@ Subcommands:
   createoutputstream   Create an output stream
   createhistorian   Create a local historian
   connectiontopdc   Connect to lower level PDC
+  createaccount   Create a MySQL user account
   help              Show this help
 
 Global options:
@@ -72,18 +73,24 @@ connectiontopdc options:
   --server                    mandatory
   --pmus                      mandatory
 
+createaccount options:
+  --username USER         mandatory
+  --password PWD          mandatory
+  --firstname NAME       mandatory
+  --lastname NAME        mandatory
 
 Examples:
   $0 addpmu --name "Pmu-3" --pod <podname> --ns lower --db lower
   $0 createoutputstream --ns lower --db lower --pod <podname> --acronym LOWER --name low2high  --pmus "PMU-3"
   $0 createhistorian --db higher --ns higher --pod <podname>
   $0 connectiontopdc --ns higher --db higher --name "lowerpdc" --pod <podname> --acronym "LOWER" --server "openpdc-low"  --pmus "PMU-1,PMU-2,PMU-3"
+  $0 createaccount --ns higher --db higher --pod <podname> --username polito --password Polito00 --firstname polito --lastname rse
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    addpmu|createoutputstream|createhistorian|connectiontopdc|help) SUBCOMMAND="$1"; shift; break;;
+    addpmu|createoutputstream|createhistorian|connectiontopdc|createaccount|help) SUBCOMMAND="$1"; shift; break;;
     -h|--help) usage_global; exit 0;;
     *) echo "Unknown command: $1"; usage_global; exit 1;;
     esac
@@ -785,11 +792,137 @@ EOSQL
   echo "[OK] Connection '${NAME}' to PDC server '${SERVER}' successfully created with PMUs: ${PMUS}"
 
 }
+createaccount_cmd() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage_global; return 0;;
+      --ns) NS="$2"; shift 2;;
+      --cluster-prefix) CLUSTER_PREFIX="$2"; POD="${CLUSTER_PREFIX}-pxc-0"; SVC="${CLUSTER_PREFIX}-haproxy"; SECRET="${CLUSTER_PREFIX}-secrets"; shift 2;;
+      --db) DB_NAME="$2"; shift 2;;
+      --pod) OPENPDC_POD="$2"; shift 2;;
+      --pxc-pod) POD="$2"; shift 2;;
+      --haproxy-svc) SVC="$2"; shift 2;;
+      --username) USERNAME="$2"; shift 2;;
+      --password) PASSWORD="$2"; shift 2;;
+      --firstname) FIRSTNAME="$2"; shift 2;;
+      --lastname) LASTNAME="$2"; shift 2;;
+      *) echo "Argument unknown: $1"; return 1;;
+    esac
+  done
+
+  # global
+  POD="${CLUSTER_PREFIX}-pxc-0"
+  SVC="${CLUSTER_PREFIX}-haproxy"
+  SECRET="${CLUSTER_PREFIX}-secrets"
+
+  if [[ -z "$NS" ]]; then
+    echo "Error: --ns <namespace> is mandatory."
+    return 1 
+  fi
+  if [[ -z "$DB_NAME" ]]; then
+    echo "Error: --db <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$USERNAME" ]]; then
+    echo "Error: --username <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$PASSWORD" ]]; then
+    echo "Error: --password <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$FIRSTNAME" ]]; then
+    echo "Error: --firstname <name> is mandatory."
+    return 1
+  fi
+  if [[ -z "$LASTNAME" ]]; then
+    echo "Error: --lastname <name> is mandatory."
+    return 1
+  fi
+
+  echo "Namespace: $NS"
+  echo "DB: $DB_NAME  Pod: $POD  Svc: $SVC"
+  echo "Creating user account: $USERNAME ($FIRSTNAME $LASTNAME)"
+  local ROOTPWD
+  ROOTPWD="$(kubectl get secrets "$SECRET" -n "$NS" -o jsonpath='{.data.root}' | base64 --decode)"
+
+  esc() { printf "%s" "$1" | sed "s/'/''/g"; }
+  UESC=$(esc "$USERNAME")
+  FESC=$(esc "$FIRSTNAME")
+  LESC=$(esc "$LASTNAME")
+  PHESC='SpGxVC2T8Hur/HfkWGEklBRNvlX+07gnGuLg7qC6qy0='
+
+  # ---------- Blocco SQL (variabili espanse) ----------
+  SQL=$(cat <<SQL_EOF
+SET NAMES utf8mb4;
+SET character_set_results = NULL;
+
+-- Prende un Node valido (il primo disponibile)
+SET @NodeID := (SELECT ID FROM Node LIMIT 1);
+
+-- 1) RUOLI (idempotente)
+INSERT INTO ApplicationRole (ID, Name, Description, NodeID, UpdatedBy, CreatedBy)
+SELECT UUID(), 'Administrator', 'Administrator Role', @NodeID, 'CLI', 'CLI'
+WHERE NOT EXISTS (SELECT 1 FROM ApplicationRole WHERE Name='Administrator' AND NodeID=@NodeID);
+
+INSERT INTO ApplicationRole (ID, Name, Description, NodeID, UpdatedBy, CreatedBy)
+SELECT UUID(), 'Editor', 'Editor Role', @NodeID, 'CLI', 'CLI'
+WHERE NOT EXISTS (SELECT 1 FROM ApplicationRole WHERE Name='Editor' AND NodeID=@NodeID);
+
+INSERT INTO ApplicationRole (ID, Name, Description, NodeID, UpdatedBy, CreatedBy)
+SELECT UUID(), 'Viewer', 'Viewer Role', @NodeID, 'CLI', 'CLI'
+WHERE NOT EXISTS (SELECT 1 FROM ApplicationRole WHERE Name='Viewer' AND NodeID=@NodeID);
+
+-- 2) UTENTE con AUTENTICAZIONE DB (UseADAuthentication = 0)
+INSERT INTO UserAccount (ID, Name, Password, FirstName, LastName, DefaultNodeID, UseADAuthentication, CreatedBy, UpdatedBy)
+SELECT UUID(), '${UESC}', '${PHESC}', '${FESC}', '${LESC}', @NodeID, 0, 'CLI', 'CLI'
+WHERE NOT EXISTS (SELECT 1 FROM UserAccount WHERE Name='${UESC}');
+
+-- 3) Collega l'utente al ruolo Administrator (idempotente)
+INSERT INTO ApplicationRoleUserAccount (ApplicationRoleID, UserAccountID)
+SELECT ar.ID, ua.ID
+FROM ApplicationRole ar
+JOIN UserAccount ua ON ua.Name='${UESC}'
+WHERE ar.Name='Administrator' AND ar.NodeID=@NodeID
+  AND NOT EXISTS (
+    SELECT 1
+    FROM ApplicationRoleUserAccount x
+    WHERE x.ApplicationRoleID = ar.ID AND x.UserAccountID = ua.ID
+  );
+
+-- 4) (Facoltativo) registra un accesso positivo a log
+INSERT INTO AccessLog (UserName, AccessGranted) VALUES ('${UESC}', 1);
+SQL_EOF
+)
+
+#echo "---------- BEGIN SQL ----------"
+#    printf "%s\n" "$SQL"
+#  echo "----------- END SQL -----------"
+
+  
+  printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
+    mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
+
+  set db to lower for pdc location
+  if kubectl exec -i "$OPENPDC_POD" -n lower -c openpdc -- bash -lc \
+   "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
+   >/dev/null 2>&1; then
+   sleep 1
+    echo "✅ Configuration successfully reloaded!"
+  else
+    echo "Impossible to send ReloadConfig to '$OPENPDC_POD'." >&2
+    echo "Check that openPDC is running inside a screen session called 'openpdc'. Otherwise, run the ReloadConfig via the openPDC Manager." >&2
+  fi
+
+  echo "[OK] User account '${USERNAME}' successfully created."
+
+}
 case "$SUBCOMMAND" in
   help) usage_global;;
   addpmu) addpmu_cmd "$@";;
   createoutputstream) createoutputstream_cmd "${GLOBAL_ARGS[@]}" "$@";;
   createhistorian) createhistorian_cmd "${GLOBAL_ARGS[@]}" "$@";;
   connectiontopdc) connectiontopdc_cmd "${GLOBAL_ARGS[@]}" "$@";;
+  createaccount) createaccount_cmd "${GLOBAL_ARGS[@]}" "$@";;
   *) usage_global; exit 1;;
 esac
