@@ -136,9 +136,38 @@ check_global_params(){
     echo "Error: openPDC pod not set (use --pod)." >&2
     return 1
   fi
-  if ! kubectl get pod "$OPENPDC_POD" -n "$NS" >/dev/null 2>&1; then
+  # set ns to lower for pdc location
+  if ! kubectl get pod "$OPENPDC_POD" -n lower >/dev/null 2>&1; then
     echo "Error: Pod '$OPENPDC_POD' does not exist in namespace '$NS'." >&2
     return 1
+  fi
+
+  return 0
+}
+
+run_mysql() {
+  local POD="$1"; shift
+  local SVC="$1"; shift
+  local ROOTPWD="$1"; shift
+  local DB="$1"; shift
+  local SQL="$1"
+
+  set +e
+  local out rc dup_msg
+  out="$(printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- env MYSQL_PWD="$ROOTPWD" mysql -h "$SVC" -uroot --database "$DB" --batch --silent 2>&1)"
+  rc=$?
+  set -e
+
+  if [[ $rc -ne 0 ]]; then
+    if printf "%s" "$out" | grep -qiE "Duplicate entry|ERROR 1062"; then
+      dup_msg="$(printf "%s" "$out" | grep -iE "Duplicate entry|ERROR 1062" | head -n1 | sed -e 's/^[[:space:]]*//')"
+      echo "[❌ERROR] MySQL: duplicate entry detected — ${dup_msg}" >&2
+      exit 1
+    else
+      echo "MySQL ERROR (exit $rc):" >&2
+      printf "%s\n" "$out" >&2
+      return $rc
+    fi
   fi
 
   return 0
@@ -325,6 +354,9 @@ EOF
 
 printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
   mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
+
+#run_mysql "$POD" "$SVC" "$ROOTPWD" "$DB_NAME" "$SQL"
+
 sleep 1
 echo "🔄 Reloading openPDC configuration..."
   if kubectl exec -i "$OPENPDC_POD" -n "$NS" -c openpdc -- bash -lc \
