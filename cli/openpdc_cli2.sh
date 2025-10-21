@@ -582,9 +582,10 @@ EOF
   printf "%s" "$SQL" | kubectl exec -i "$POD" -c pxc -n "$NS" -- \
     mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
-  echo "🔄 Reloading openPDC configuration..."
+  
 
 #set db to lower for pdc location
+echo "🔄 Reloading openPDC configuration..."
   if kubectl exec -i "$OPENPDC_POD" -n lower -c openpdc -- bash -lc \
    "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
    >/dev/null 2>&1; then
@@ -779,6 +780,7 @@ EOSQL
     mysql -h "$SVC" -uroot -p"$ROOTPWD" --database "$DB_NAME" --batch --silent
 
   #set db to lower for pdc location
+  echo "🔄 Reloading openPDC configuration..."
   if kubectl exec -i "$OPENPDC_POD" -n lower -c openpdc -- bash -lc \
    "screen -ls | grep -q '\.openpdc' && screen -S openpdc -X stuff $'ReloadConfig\r'" \
    >/dev/null 2>&1; then
