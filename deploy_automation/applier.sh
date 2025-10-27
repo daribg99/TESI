@@ -73,29 +73,48 @@ echo
 # Normalize 'cluster1'/'cluster-1' → 'k3d-cluster-1'
 normalize_to_ctx() {
   local raw="$1"
-  raw="${raw//[[:space:]]/}"
+  raw="${raw//$'\r'/}"                                      # leva CR
+  raw="$(echo -n "$raw" | sed -E 's/[[:space:]]//g')"       # leva spazi/tab
   local norm
   norm="$(echo "$raw" | sed -E 's/^cluster-?([0-9]+)$/cluster-\1/i')"
   echo "k3d-${norm}"
 }
 
-echo "🧪 DEBUG plan (no actual deploy):"
-echo "---------------------------------"
+NAMESPACE="lower"
+RAW_URL="https://raw.githubusercontent.com/netgroup-polito/rse-resiliency/refs/heads/liqo-update/demo-apr-oct-2021/deploy-HA-mysql/openpdc-lower-level2.yaml?token=GHSAT0AAAAAADDLOREZSV6NOSUO55VCEVZO2H7SWEQ"
+if ! curl -fsI "$RAW_URL" >/dev/null; then
+  echo "❌ Manifest unreachable (404?): $RAW_URL" >&2
+  echo "👉 Open the link in your browser and use the 'Raw' button to copy the correct URL." >&2
+  exit 1
+fi
+
+echo "🚀 Applying $YAML_URL to target clusters..."
+echo "-----------------------------------------"
 for c in "${ORDERED_CLUSTERS[@]}"; do
   ctx="$(normalize_to_ctx "$c")"
-  echo "➡️  JSON cluster: '$c'  -> normalized context: '$ctx'"
+  echo "➡️  Cluster JSON: '$c'  -> context: '$ctx'"
 
-  if kubectl --kubeconfig "$MERGED" config get-contexts -o name | grep -qx "$ctx"; then
-    echo "   ✓ Context found."
-  else
+  if ! kubectl --kubeconfig "$MERGED" config get-contexts -o name | grep -qx "$ctx"; then
     echo "   ⚠️  Context '$ctx' NOT found in merged. Skipping."
     echo
     continue
   fi
 
-  echo "   [DEBUG] Would run: kubectl --kubeconfig \"$MERGED\" --context \"$ctx\" apply -f openpdc.yaml"
-  echo "   [DEBUG] Would run: kubectl --kubeconfig \"$MERGED\" --context \"$ctx\" get pods -n openpdc"
+  # Create the namespace if it doesn't exist (don't fail if it already exists)
+  if ! kubectl --kubeconfig "$MERGED" --context "$ctx" get ns "$NAMESPACE" >/dev/null 2>&1; then
+    echo "   📦 Creating namespace '$NAMESPACE'..."
+    kubectl --kubeconfig "$MERGED" --context "$ctx" create ns "$NAMESPACE"
+  fi
+
+  echo "   📥 kubectl apply -n $NAMESPACE -f $RAW_URL"
+  if kubectl --kubeconfig "$MERGED" --context "$ctx" -n "$NAMESPACE" apply -f "$RAW_URL"; then
+    echo "   ✅ Apply OK on '$ctx'"
+    echo "   🔎 Pods:"
+    kubectl --kubeconfig "$MERGED" --context "$ctx" -n "$NAMESPACE" get pods
+  else
+    echo "   ❌ Apply FAILED on '$ctx' — continuing with next cluster" >&2
+  fi
   echo
 done
 
-echo "🎯 Done (debug only)."
+echo "🎯 Done."

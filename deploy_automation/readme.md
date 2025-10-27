@@ -31,3 +31,7 @@ Remove the latency configuration when done:
 docker run --rm --privileged --net container:k3d-cluster-5-server-0 \
   nicolaka/netshoot tc qdisc del dev eth0 root
 ```
+To launch kubectl commands on a specific namespace with specific context, use:
+```bash
+kubectl --kubeconfig kubeconfigs/merged.yaml --context k3d-cluster-1 -n lower
+```
