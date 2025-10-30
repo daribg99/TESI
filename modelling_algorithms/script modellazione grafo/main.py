@@ -31,14 +31,14 @@ def choose_algorithm(G):
     elif choice not in ["1", "2", "3", "4", "5"]:
         print("Invalid choice. Please try again.")
         return choose_algorithm(G)
-    flagSplitting = input("Enable cluster splitting? (y/n): ").lower() == 'y'
+    flag_splitting = input("Enable cluster splitting? (y/n): ").lower() == 'y'
     if choice == "1":
         max_latency = int(input("Enter maximum latency (in ms): "))
-        return place_pdcs_greedy(G, max_latency, flagSplitting)
+        return place_pdcs_greedy(G, max_latency, flag_splitting)
     elif choice == "2":
         max_latency = int(input("Enter maximum latency (in ms): "))
         seed = int(input("Enter seed (leave empty for no seed): ") or 42)
-        return place_pdcs_random(G, max_latency, seed)
+        return place_pdcs_random(G, max_latency, seed, flag_splitting)
     elif choice == "3":
         max_latency = int(input("Enter maximum latency (in ms): "))
         return q_learning_placement(G, max_latency)

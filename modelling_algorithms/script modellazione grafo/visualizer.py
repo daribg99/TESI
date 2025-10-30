@@ -11,7 +11,7 @@ def draw_graph(G, pdcs=None, paths=None, max_latency=None):
     try:
         pos = nx.nx_pydot.pydot_layout(G, prog="dot")
     except Exception:
-        print("⚠️ Errore con pydot. Uso spring_layout.")
+        print("⚠️ Error with pydot layout, using spring layout instead.")
         pos = nx.spring_layout(G, seed=42)
 
     edge_labels = nx.get_edge_attributes(G, "latency")
@@ -75,7 +75,7 @@ def draw_graph(G, pdcs=None, paths=None, max_latency=None):
                                    edge_color=color)
 
         # Testo con le latenze
-        text = "Latenze PMU → CC:\n"
+        text = "Latency PMU → CC:\n"
         text += "Max latency: " + str(max_latency) + " ms\n"
         for pmu, data in paths.items():
             delay = data["delay"]            
@@ -92,12 +92,12 @@ def draw_graph(G, pdcs=None, paths=None, max_latency=None):
     legend_elements = [
         Patch(facecolor="red", edgecolor="black", label="CC"),
         Patch(facecolor="lightgreen", edgecolor="black", label="PMU"),
-        Patch(facecolor="orange", edgecolor="black", label="PDC (selezionati)"),
-        Patch(facecolor="lightblue", edgecolor="gray", label="Altro nodo (candidato)")
+        Patch(facecolor="orange", edgecolor="black", label="PDC (assigned)"),
+        Patch(facecolor="lightblue", edgecolor="gray", label="Other Nodes"),
     ]
     plt.legend(handles=legend_elements, loc="lower left", fontsize=9, frameon=True)
 
-    plt.title("Grafo con ruoli e path evidenziati", fontsize=12)
+    plt.title("Graph with role and selected path", fontsize=12)
     plt.axis("off")
     plt.tight_layout()
     plt.show(block=False)
