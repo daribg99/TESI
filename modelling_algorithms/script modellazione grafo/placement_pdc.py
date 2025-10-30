@@ -13,7 +13,6 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
 
         # --- Funzioni di supporto ---
         def path_valid(path, extra_rate):
-            """Controlla se il path ha abbastanza banda residua."""
             for u, v in zip(path, path[1:]):
                 edge = (u, v) if (u, v) in G.edges else (v, u)
                 capacity = G.edges[edge].get("bandwidth", float("inf"))
@@ -23,7 +22,6 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
             return True
 
         def update_bandwidth(path, rate, pmu):
-            """Aggiorna la banda usata sugli archi."""
             for u, v in zip(path, path[1:]):
                 edge = (u, v) if (u, v) in G.edges else (v, u)
                 bandwidth_usage[edge] = bandwidth_usage.get(edge, 0) + rate
@@ -37,12 +35,12 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
             found = False
             rate = G.nodes[pmu].get("data_rate", 0)
 
-            print(f"\n🔍 Analizzo {pmu} (rate={rate} kbps):")
+            print(f"\n🔍 Analyzing {pmu} (rate={rate} kbps):")
 
             try:
                 all_paths = nx.shortest_simple_paths(G, source=pmu, target="CC", weight="latency")
             except nx.NetworkXNoPath:
-                print(f"❌ Nessun path disponibile da {pmu} a CC.")
+                print(f"❌ No path available from {pmu} to CC.")
                 continue
 
             for path in all_paths:
@@ -67,38 +65,36 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
 
                     pmu_paths[pmu] = {"path": path, "delay": total_latency}
 
-                    print(f"✅ Path trovato per {pmu}: {path} (delay={total_latency:.2f} ms)")
+                    print(f"✅ Path found for {pmu}: {path} (delay={total_latency:.2f} ms)")
                     break
                 else:
-                    print(f"⚠️ Banda insufficiente su {path}, provo successivo...")
+                    print(f"⚠️ Insufficient bandwidth on {path}, trying next...")
 
             if not found:
-                print(f"❌ Nessun path valido per {pmu} trovato.")
+                print(f"❌ No valid path found for {pmu}.")
 
         # --- Output finale ---
-        print("\n📡 Path finali PMU → CC:")
+        print("\n📡 Final paths PMU → CC:")
         for pmu, data in pmu_paths.items():
-            print(f"  {pmu} → CC: {data['path']} | Ritardo totale: {data['delay']:.2f} ms")
+            print(f"  {pmu} → CC: {data['path']} | Total delay: {data['delay']:.2f} ms")
 
         if pmu_paths:
             max_pmu, max_data = max(pmu_paths.items(), key=lambda x: x[1]["delay"])
             if max_data["delay"] > max_latency:
-                print(f"\n⚠️ Ritardo massimo {max_data['delay']:.2f} ms supera soglia {max_latency} ms (PMU: {max_pmu})")
+                print(f"\n⚠️ Maximum delay {max_data['delay']:.2f} ms exceeds threshold {max_latency} ms (PMU: {max_pmu})")
             else:
-                print(f"\n✅ Tutti i path sotto la soglia {max_latency} ms.")
+                print(f"\n✅ All paths under threshold {max_latency} ms.")
         else:
-            print("\n⚠️ Nessun path valido trovato.")
+            print("\n⚠️ No valid path found.")
 
         return pdcs, pmu_paths, max_latency
     else:
         pmu_paths = {}        # {pmu: {"path": [...], "delay": ...}}
-        pdcs = set()          # insieme dei PDC assegnati
-        bandwidth_usage = {}  # (u,v) -> banda utilizzata
-        pdc_to_pmus = {}      # pdc -> set di pmu che passano da lì
+        pdcs = set()          
+        bandwidth_usage = {}  
+        pdc_to_pmus = {}      
 
-        # --- Funzioni di supporto ---
         def path_valid(path, extra_rate=0):
-            """Controlla se il path ha banda residua sufficiente."""
             for u, v in zip(path, path[1:]):
                 edge = (u, v) if (u, v) in G.edges else (v, u)
                 cap = G.edges[edge].get("bandwidth", float("inf"))
@@ -108,13 +104,11 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
             return True
 
         def update_bandwidth(path, rate):
-            """Aggiorna la banda sugli archi."""
             for u, v in zip(path, path[1:]):
                 edge = (u, v) if (u, v) in G.edges else (v, u)
                 bandwidth_usage[edge] = bandwidth_usage.get(edge, 0) + rate
 
         def compute_delay(path):
-            """Calcola la latenza totale (archi + processing dei PDC)."""
             delay = sum(G[u][v]["latency"] for u, v in zip(path, path[1:]))
             for node in path[1:-1]:
                 if G.nodes[node].get("role") not in {"PMU", "CC"}:
@@ -122,25 +116,23 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
             return delay
 
         def find_common_pdc(path):
-            """Ritorna il primo PDC in comune tra il path e i path esistenti."""
             for pmu, data in pmu_paths.items():
                 for node in path[1:-1]:
                     if node in data["path"][1:-1] and G.nodes[node].get("role") not in {"PMU", "CC"}:
                         return node, pmu
             return None, None
 
-        # --- Inizio algoritmo ---
         pmu_nodes = [n for n in G.nodes if G.nodes[n].get("role") == "PMU"]
 
         for pmu in pmu_nodes:
             rate = G.nodes[pmu].get("data_rate", 0)
             found = False
-            print(f"\n🔍 Analizzo {pmu} (rate={rate} kbps):")
+            print(f"\n🔍 Analyzing {pmu} (rate={rate} kbps):")
 
             try:
                 all_paths = nx.shortest_simple_paths(G, source=pmu, target="CC", weight="latency")
             except nx.NetworkXNoPath:
-                print(f"❌ Nessun path disponibile per {pmu}")
+                print(f"❌ No path available for {pmu}")
                 continue
 
             for path in all_paths:
@@ -150,11 +142,11 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
                 if not all(G[u][v].get("status", "up") == "up" for u, v in zip(path, path[1:])):
                     continue
 
-                # 🔸 cerca intersezione con PDC già usati
+                #  cerca intersezione con PDC già usati
                 common_pdc, ref_pmu = find_common_pdc(path)
 
                 if common_pdc:
-                    print(f"⚠️ {pmu} converge su {common_pdc}, condiviso con {ref_pmu}")
+                    print(f"⚠️ {pmu} converges on {common_pdc}, shared with {ref_pmu}")
 
                     affected_existing = {p for p, d in pmu_paths.items() if common_pdc in d["path"]}
                     affected_all = affected_existing | {pmu}
@@ -163,9 +155,9 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
                     try:
                         for new_tail in nx.shortest_simple_paths(G, source=common_pdc, target="CC", weight="latency"):
                             if path_valid(new_tail, total_rate):
-                                print(f"✅ Nuovo tratto comune valido da {common_pdc}: {new_tail}")
+                                print(f"✅ New valid common segment from {common_pdc}: {new_tail}")
 
-                                # 🔹 aggiorna path delle PMU già presenti
+                                #  aggiorna path delle PMU già presenti
                                 for p in affected_existing:
                                     old_path = pmu_paths[p]["path"]
                                     idx = old_path.index(common_pdc)
@@ -173,7 +165,7 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
                                     pmu_paths[p]["path"] = new_path
                                     pmu_paths[p]["delay"] = compute_delay(new_path)
 
-                                # 🔹 aggiungi la nuova PMU
+                                #  aggiungi la nuova PMU
                                 try:
                                     prefix = nx.shortest_path(G, source=pmu, target=common_pdc, weight="latency")
                                     full_path = prefix + new_tail[1:]
@@ -181,26 +173,26 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
                                         "path": full_path,
                                         "delay": compute_delay(full_path)
                                     }
-                                    print(f"✅ Nuova PMU {pmu} aggiunta con path: {full_path}")
+                                    print(f"✅ New PMU {pmu} added with path: {full_path}")
                                 except nx.NetworkXNoPath:
-                                    print(f"❌ {pmu} non raggiunge {common_pdc}")
+                                    print(f"❌ {pmu} cannot reach {common_pdc}")
                                     continue
 
-                                # 🔹 aggiorna la banda totale
+                                # aggiorna la banda totale
                                 for p in affected_all:
                                     update_bandwidth(pmu_paths[p]["path"], G.nodes[p].get("data_rate", 0))
                                 found = True
                                 break
 
                         if not found:
-                            print(f"❌ Nessun tratto comune disponibile per {common_pdc}")
+                            print(f"❌ No common segment available for {common_pdc}")
 
                     except nx.NetworkXNoPath:
-                        print(f"❌ Nessun path dal PDC {common_pdc} a CC")
+                        print(f"❌ No path from PDC {common_pdc} to CC")
 
                     break  # intersezione gestita, passa alla prossima PMU
 
-                # 🔹 Nessuna intersezione → controllo di banda standard
+                # Nessuna intersezione → controllo di banda standard
                 if path_valid(path, rate):
                     update_bandwidth(path, rate)
                     total_latency = compute_delay(path)
@@ -212,26 +204,26 @@ def place_pdcs_greedy(G, max_latency, flag_splitting=False):
                             pdc_to_pmus.setdefault(node, set()).add(pmu)
 
                     pmu_paths[pmu] = {"path": path, "delay": total_latency}
-                    print(f"✅ Path valido per {pmu}: {path} (delay={total_latency:.2f} ms)")
+                    print(f"✅ Path valid for {pmu}: {path} (delay={total_latency:.2f} ms)")
                     found = True
                     break
 
             if not found:
-                print(f"❌ Nessun path valido trovato per {pmu}")
+                print(f"❌ No valid path found for {pmu}")
 
         # --- Output finale ---
-        print("\n📡 Path finali PMU → CC:")
+        print("\n📡 Final PMU → CC paths:")
         for pmu, data in pmu_paths.items():
-            print(f"  {pmu} → {data['path']} | Latenza totale = {data['delay']:.2f} ms")
+            print(f"  {pmu} → {data['path']} | Total latency = {data['delay']:.2f} ms")
 
         if pmu_paths:
             max_pmu, max_data = max(pmu_paths.items(), key=lambda x: x[1]["delay"])
             if max_data["delay"] > max_latency:
-                print(f"\n⚠️ Ritardo massimo {max_data['delay']:.2f} ms supera soglia {max_latency} ms (PMU: {max_pmu})")
+                print(f"\n⚠️ Maximum latency {max_data['delay']:.2f} ms exceeds threshold {max_latency} ms (PMU: {max_pmu})")
             else:
-                print(f"\n✅ Tutti i path sotto la soglia {max_latency} ms.")
+                print(f"\n✅ All paths under threshold {max_latency} ms.")
         else:
-            print("\n⚠️ Nessun path valido trovato.")
+            print("\n⚠️ No valid path found.")
 
         return pdcs, pmu_paths, max_latency
 
