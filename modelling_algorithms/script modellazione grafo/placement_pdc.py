@@ -4,51 +4,114 @@ import numpy as np
 from itertools import islice
 from itertools import combinations
 
-def place_pdcs_greedy(G, max_latency):
+def place_pdcs_greedy(G, max_latency, flag_splitting=False):
     pdcs = set()
     pmu_paths = {}
 
     bandwidth_usage = {}  # (u, v) → traffico totale corrente
-    edge_flow = {}        # (u, v) → flussi passanti (per logging/debug)
+    edge_flow = {}        # (u, v) → lista di PMU che usano l'arco
 
     pmu_nodes = [n for n in G.nodes if G.nodes[n].get("role") == "PMU"]
     pmu_to_path = {}
 
-    for pmu in pmu_nodes:
-        base_rate = G.nodes[pmu].get("data_rate", 0)
+    def path_valid(path, extra_rate=0):
+        """Controlla se un path ha abbastanza banda residua (considerando eventuale extra_rate)."""
+        for u, v in zip(path, path[1:]):
+            edge = (u, v) if (u, v) in G.edges else (v, u)
+            capacity = G.edges[edge].get("bandwidth", float("inf"))
+            usage = bandwidth_usage.get(edge, 0)
+            if usage + extra_rate > capacity:
+                return False
+        return True
 
+    def update_bandwidth(path, base_rate, pmu):
+        """Aggiorna uso banda e flussi su un path."""
+        for u, v in zip(path, path[1:]):
+            edge = (u, v) if (u, v) in G.edges else (v, u)
+            bandwidth_usage[edge] = bandwidth_usage.get(edge, 0) + base_rate
+            edge_flow.setdefault(edge, []).append(pmu)
+            print(f"✅ Arco {u}–{v} +{base_rate} kbps (da {pmu}) → totale: {bandwidth_usage[edge]} / {G.edges[edge]['bandwidth']} kbps")
+
+    def remove_pmu_path(pmu):
+        """Rimuove il path di un PMU dalla rete."""
+        if pmu not in pmu_to_path:
+            return
+        path = pmu_to_path[pmu]
+        base_rate = G.nodes[pmu].get("data_rate", 0)
+        for u, v in zip(path, path[1:]):
+            edge = (u, v) if (u, v) in G.edges else (v, u)
+            bandwidth_usage[edge] = max(0, bandwidth_usage.get(edge, 0) - base_rate)
+            if edge in edge_flow:
+                if pmu in edge_flow[edge]:
+                    edge_flow[edge].remove(pmu)
+                if not edge_flow[edge]:
+                    del edge_flow[edge]
+        del pmu_to_path[pmu]
+
+    def find_valid_path(pmu, required_rate):
+        """Trova un path valido rispettando capacità e stato."""
         try:
-            paths = nx.shortest_simple_paths(G, source=pmu, target="CC", weight="latency")
-            for path in paths:
+            for path in nx.shortest_simple_paths(G, source=pmu, target="CC", weight="latency"):
                 if not all(G.nodes[n].get("status") == "online" for n in path):
                     continue
                 if not all(G[u][v].get("status") == "up" for u, v in zip(path, path[1:])):
                     continue
+                if path_valid(path, extra_rate=required_rate):
+                    return path
+            return None
+        except nx.NetworkXNoPath:
+            return None
 
-                # Verifica se tutti gli archi lungo il path hanno banda sufficiente
-                path_ok = True
-                for u, v in zip(path, path[1:]):
-                    edge = (u, v) if (u, v) in G.edges else (v, u)
-                    capacity = G.edges[edge].get("bandwidth", float("inf"))
-                    usage = bandwidth_usage.get(edge, 0)
-                    if usage + base_rate > capacity:
-                        path_ok = False
+    for pmu in pmu_nodes:
+        base_rate = G.nodes[pmu].get("data_rate", 0)
+        path = find_valid_path(pmu, base_rate)
+
+        if not path:
+            if flag_splitting == 1:
+                print(f"⚠️ Nessun path valido da {pmu} a CC (stato o banda).")
+                continue
+            else:
+                # Tentiamo la riassegnazione
+                print(f"⚠️ Nessun path valido per {pmu}, provo riassegnazione...")
+                overflow_edges = []
+                for path_cand in nx.shortest_simple_paths(G, source=pmu, target="CC", weight="latency"):
+                    for u, v in zip(path_cand, path_cand[1:]):
+                        edge = (u, v) if (u, v) in G.edges else (v, u)
+                        capacity = G.edges[edge].get("bandwidth", float("inf"))
+                        usage = bandwidth_usage.get(edge, 0)
+                        if usage + base_rate > capacity:
+                            overflow_edges.append(edge)
+                    if overflow_edges:
                         break
 
-                if path_ok:
-                    # Accetta il path, aggiorna uso di banda lungo il path
-                    pmu_to_path[pmu] = path
-                    for u, v in zip(path, path[1:]):
-                        edge = (u, v) if (u, v) in G.edges else (v, u)
-                        bandwidth_usage[edge] = bandwidth_usage.get(edge, 0) + base_rate
-                        edge_flow.setdefault(edge, []).append(pmu)
-                        print(f"✅ Arco {u}–{v} +{base_rate} kbps (da {pmu}) → totale: {bandwidth_usage[edge]} / {G.edges[edge]['bandwidth']} kbps")
-                    break  # trovato un path valido, esci dal loop
-            else:
-                print(f"⚠️ Nessun path valido da {pmu} a CC (stato o banda).")
-        except nx.NetworkXNoPath:
-            print(f"⚠️ Nessun path esistente da {pmu} a CC.")
-            continue
+                if not overflow_edges:
+                    print(f"⚠️ Nessun path utilizzabile nemmeno dopo riassegnazione per {pmu}.")
+                    continue
+
+                # Rimuovi tutti i PMU che usano gli archi saturi
+                affected_pmus = set()
+                for edge in overflow_edges:
+                    affected_pmus.update(edge_flow.get(edge, []))
+
+                print(f"🔄 Overflow su {overflow_edges}, rimuovo PMU: {list(affected_pmus)} e ricalcolo...")
+
+                for a_pmu in affected_pmus:
+                    remove_pmu_path(a_pmu)
+
+                # Prova a ricalcolare tutti (PMU rimossi + nuovo)
+                for p in affected_pmus.union({pmu}):
+                    new_rate = G.nodes[p].get("data_rate", 0)
+                    new_path = find_valid_path(p, new_rate)
+                    if new_path:
+                        pmu_to_path[p] = new_path
+                        update_bandwidth(new_path, new_rate, p)
+                    else:
+                        print(f"❌ Non trovato nuovo path per {p} dopo riassegnazione.")
+                continue
+
+        # path trovato normalmente
+        pmu_to_path[pmu] = path
+        update_bandwidth(path, base_rate, pmu)
 
     # Ricava i nodi PDC dai path (escludi PMU e CC)
     for path in pmu_to_path.values():
@@ -58,9 +121,7 @@ def place_pdcs_greedy(G, max_latency):
 
     # Calcola la latenza totale di ciascun path
     for pmu, path in pmu_to_path.items():
-        total_delay = 0.0
-        for u, v in zip(path, path[1:]):
-            total_delay += G[u][v]["latency"]
+        total_delay = sum(G[u][v]["latency"] for u, v in zip(path, path[1:]))
         for node in path:
             if node in pdcs:
                 total_delay += G.nodes[node].get("processing", 0)
@@ -86,6 +147,7 @@ def place_pdcs_greedy(G, max_latency):
         print(f"✅ Ritardo massimo {max_delay:.2f} ms sotto la soglia {max_latency} ms.")
 
     return (pdcs, pmu_paths, max_latency)
+
 
 def place_pdcs_random(G, max_latency, seed=None):
     if seed is not None:

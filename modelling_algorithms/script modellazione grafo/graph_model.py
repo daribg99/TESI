@@ -1,7 +1,7 @@
 import networkx as nx
 import random
 
-def create_graph(seed=None):
+def create_graph(seed=42):
     if seed is not None:
         random.seed(seed)
     G = nx.Graph()
@@ -51,7 +51,7 @@ def create_graph(seed=None):
 
     for u, v in edges:
         latency = round(random.uniform(2, 9), 2)
-        bandwidth = random.choice([100])  # in kbps
+        bandwidth = random.choice([200])  # in kbps
         status = "up"
         link_type = random.choices(["fiber", "ethernet", "wireless"], weights=[0.4, 0.4, 0.2])[0]
 
@@ -64,46 +64,69 @@ def create_graph(seed=None):
 
 def modify_latency(G):
     while True:
-            print("\n🔗 Latenze attuali:")
+            print("\n🔗 Actually latency:")
             for u, v, data in G.edges(data=True):
                 print(f"{u} – {v}: {data['latency']} ms")
 
-            risposta = input("\nVuoi modificare una latenza? (s/n): ").lower()
-            if risposta != "s":
+            risposta = input("\nDo you want to modify a latency? (y/n): ").lower()
+            if risposta != "y":
                 break
 
-            u = input("Nodo 1 dell’arco: ").strip()
-            v = input("Nodo 2 dell’arco: ").strip()
+            u = input("Node 1: ").strip()
+            v = input("Node 2: ").strip()
 
             if G.has_edge(u, v):
                 try:
-                    nuova_latenza = float(input(f"Inserisci nuova latenza per l’arco {u}–{v}: "))
+                    nuova_latenza = float(input(f"Enter new latency for edge {u}–{v}: "))
                     G[u][v]["latency"] = nuova_latenza
-                    print(f"✔️ Latenza aggiornata per {u}–{v} a {nuova_latenza} ms.")
+                    print(f"✔️ Latency updated for {u}–{v} to {nuova_latenza} ms.")
                 except ValueError:
-                    print("❌ Valore non valido.")
+                    print("❌ Invalid value.")
             else:
-                print("❌ L’arco specificato non esiste.")
-                
+                print("❌ The specified edge does not exist.")
+
 def modify_edge_status(G):
     while True:
-        print("\n🔗 Stato attuale degli archi:")
+        print("\n🔗 Current edge statuses:")
         for u, v, data in G.edges(data=True):
             print(f"{u} – {v}: {data['status']}")
 
-        risposta = input("\nVuoi modificare lo stato di un arco? (s/n): ").lower()
-        if risposta != "s":
+        risposta = input("\nDo you want to modify the status of an edge? (y/n): ").lower()
+        if risposta != "y":
             break
 
-        u = input("Nodo 1 dell’arco: ").strip()
-        v = input("Nodo 2 dell’arco: ").strip()
+        u = input("Node 1: ").strip()
+        v = input("Node 2: ").strip()
 
         if G.has_edge(u, v):
-            nuovo_stato = input(f"Inserisci nuovo stato per l’arco {u}–{v} (up/down): ").strip().lower()
+            nuovo_stato = input(f"Enter new status for edge {u}–{v} (up/down): ").strip().lower()
             if nuovo_stato in ["up", "down"]:
                 G[u][v]["status"] = nuovo_stato
-                print(f"✔️ Stato aggiornato per {u}–{v} a {nuovo_stato}.")
+                print(f"✔️ Status updated for {u}–{v} to {nuovo_stato}.")
             else:
-                print("❌ Stato non valido. Usa 'up' o 'down'.")
+                print("❌ Invalid status. Use 'up' or 'down'.")
         else:
-            print("❌ L’arco specificato non esiste.")
+            print("❌ The specified edge does not exist.")
+
+def modify_bandwidth(G):
+    while True:
+            print("\n🔗 Current bandwidths:")
+            for u, v, data in G.edges(data=True):
+                print(f"{u} – {v}: {data['bandwidth']} kbps")
+
+            risposta = input("\nDo you want to modify a bandwidth? (y/n): ").lower()
+            if risposta != "y":
+                break
+
+            u = input("Node 1: ").strip()
+            v = input("Node 2: ").strip()
+
+            if G.has_edge(u, v):
+                try:
+                    nuova_bandwidth = float(input(f"Enter new bandwidth for edge {u}–{v}: "))
+                    G[u][v]["bandwidth"] = nuova_bandwidth
+                    print(f"✔️ Bandwidth updated for {u}–{v} to {nuova_bandwidth} kbps.")
+                except ValueError:
+                    print("❌ Invalid value.")
+            else:
+                print("❌ The specified edge does not exist.")
