@@ -47,7 +47,7 @@ def choose_algorithm(G):
         return train_with_policy_gradient(G, max_latency)
     elif choice == "5":
         max_latency = int(input("Enter maximum latency (in ms): "))
-        return place_pdcs_bruteforce(G, max_latency)
+        return place_pdcs_bruteforce(G, max_latency,flag_splitting)
 
 def main():
     G = create_graph(seed=42)
